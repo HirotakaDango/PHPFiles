@@ -6734,11 +6734,13 @@ if ($action) {
   
         applySort(items) {
           return [...items].sort((a, b) => {
+            const nameA = a.name || '';
+            const nameB = b.name || '';
             if (this.sortBy === 'name_asc') {
-              return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+              return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
             }
             if (this.sortBy === 'name_desc') {
-              return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' });
+              return nameB.localeCompare(nameA, undefined, { numeric: true, sensitivity: 'base' });
             }
             if (this.sortBy === 'date_desc') {
               return (b.mtime || 0) - (a.mtime || 0);
@@ -7134,12 +7136,24 @@ if ($action) {
   
         batchDelete() {
           const items = Array.from(this.selectedItems);
-          if (confirm(`Delete ${items.length} selected item(s)?`)) {
-            this.api('delete', { items }, () => {
-              this.toast('Items deleted');
-              this.clearSelection();
-              this.refresh();
-            });
+          if (!items.length) return;
+
+          if (this.currentSection === 'trash') {
+            if (confirm(`Permanently delete ${items.length} selected item(s)? This cannot be undone.`)) {
+              this.api('delete', { items }, () => {
+                this.toast('Items permanently deleted');
+                this.clearSelection();
+                this.refresh();
+              });
+            }
+          } else {
+            if (confirm(`Move ${items.length} selected item(s) to Trash?`)) {
+              this.api('trash', { items }, () => {
+                this.toast('Items moved to Trash');
+                this.clearSelection();
+                this.refresh();
+              });
+            }
           }
         }
   
@@ -7399,11 +7413,45 @@ if ($action) {
               if (loader) loader.style.display = 'none';
               window.hdmEngine.open(path, name, res.content || '');
 
-              document.getElementById('editor-save-btn').onclick = () => {
+              const saveBtn = document.getElementById('editor-save-btn');
+              const origSaveIcon = '<svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>';
+              const savedCheckIcon = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+
+              saveBtn.onclick = () => {
                 const val = window.hdmEngine.editor.getValue();
+                saveBtn.disabled = true;
+                saveBtn.style.color = '#eab308'; // Amber saving state
+                saveBtn.innerHTML = '<svg class="m3-spinner" style="width:20px;height:20px;margin:0;" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4" stroke="#eab308"></circle></svg>';
+
                 this.api('save_text', { f: path, content: val }, () => {
                   this.toast('Document saved');
-                  window.hdmEngine.updateMetrics();
+                  
+                  // Trigger Green Checkmark Saved Indicator
+                  saveBtn.style.color = '#22c55e';
+                  saveBtn.innerHTML = savedCheckIcon;
+                  saveBtn.title = 'Saved successfully!';
+
+                  // Centered floating indicator
+                  const editorPane = document.getElementById('hdm-editor-pane');
+                  if (editorPane) {
+                    const indicator = document.createElement('div');
+                    indicator.innerHTML = '<svg viewBox="0 0 24 24" style="width:48px;height:48px;fill:#22c55e;margin-bottom:10px;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><div style="font-weight:bold;font-size:1.1rem;">Saved Successfully</div>';
+                    indicator.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);background:rgba(0,0,0,0.8);color:#fff;padding:20px 30px;border-radius:16px;z-index:9999;display:flex;flex-direction:column;align-items:center;pointer-events:none;transition:opacity 0.3s;';
+                    editorPane.appendChild(indicator);
+                    setTimeout(() => { indicator.style.opacity = '0'; }, 1200);
+                    setTimeout(() => { indicator.remove(); }, 1500);
+                  }
+
+                  // Update metrics bar with saved confirmation badge
+                  window.hdmEngine.updateMetrics(true);
+
+                  setTimeout(() => {
+                    saveBtn.disabled = false;
+                    saveBtn.style.color = 'var(--md-sys-color-primary)';
+                    saveBtn.innerHTML = origSaveIcon;
+                    saveBtn.title = 'Save Document';
+                    window.hdmEngine.updateMetrics(false);
+                  }, 1800);
                 });
               };
             })
@@ -7461,7 +7509,8 @@ if ($action) {
           this.currentSection = 'activity';
           this.updateControlsVisibility();
           this.currentPath = '';
-          this.clearSelection();
+          this.selectedItems.clear();
+          this.updateBatchBar();
           this.isSearching = false;
           this.dirTitle.innerText = 'File Activity';
           this.dirStats.innerText = 'Tracking modified, edited, created, and uploaded files';
@@ -7573,7 +7622,8 @@ if ($action) {
           this.currentSection = 'recents';
           this.updateControlsVisibility();
           this.currentPath = '';
-          this.clearSelection();
+          this.selectedItems.clear();
+          this.updateBatchBar();
           this.renderLimit = 25;
           this.isSearching = false;
           this.dirTitle.innerText = 'Recents';
@@ -7616,7 +7666,8 @@ if ($action) {
           this.currentSection = 'starred';
           this.updateControlsVisibility();
           this.currentPath = '';
-          this.clearSelection();
+          this.selectedItems.clear();
+          this.updateBatchBar();
           this.renderLimit = 25;
           this.isSearching = false;
           this.dirTitle.innerText = 'Starred Items';
@@ -7687,7 +7738,8 @@ if ($action) {
           this.currentSection = 'trash';
           this.updateControlsVisibility();
           this.currentPath = '';
-          this.clearSelection();
+          this.selectedItems.clear();
+          this.updateBatchBar();
           this.isSearching = false;
           this.dirTitle.innerText = 'Trash Bin';
           this.dirStats.innerText = 'Items are permanently deleted after 30 days';
