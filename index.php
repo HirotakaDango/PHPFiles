@@ -3028,14 +3028,21 @@ if ($action) {
       }
       .layout-list .file-star-btn {
         position: static;
-        width: 32px;
-        height: 32px;
+        width: 44px;
+        height: 44px;
         background: transparent;
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
+        margin-left: auto;
       }
+
+      .layout-list .file-star-btn svg {
+        width: 24px;
+        height: 24px;
+      }
+
       .layout-list .file-star-btn:not(.active) {
         color: var(--md-sys-color-outline);
       }
@@ -3291,6 +3298,13 @@ if ($action) {
         position: absolute;
         top: 0; left: 0; right: 0;
         z-index: 1550;
+        opacity: 0;
+        transform: translateY(-100%);
+        transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+      }
+      .lightbox-header.active {
+        opacity: 1;
+        transform: translateY(0);
       }
       .lightbox-title {
         font-weight: 600;
@@ -5658,14 +5672,33 @@ if ($action) {
           this.el = document.getElementById('lightbox');
           this.title = document.getElementById('lb-title');
           this.body = document.getElementById('lb-body');
+          this.header = document.querySelector('.lightbox-header');
           this.currentIndex = 0;
           this.mediaList = [];
           this.touchStartX = 0;
           this.touchStartY = 0;
+          this.uiTimer = null;
           this.bindEvents();
         }
 
+        showUI() {
+          if (this.header) this.header.classList.add('active');
+          clearTimeout(this.uiTimer);
+          this.uiTimer = setTimeout(() => {
+            if (this.header) this.header.classList.remove('active');
+          }, 3000);
+        }
+
         bindEvents() {
+          this.el.addEventListener('mousemove', () => this.showUI());
+          this.el.addEventListener('click', () => this.showUI());
+          this.el.addEventListener('touchstart', () => this.showUI(), { passive: true });
+          
+          if (this.header) {
+            this.header.addEventListener('mouseenter', () => clearTimeout(this.uiTimer));
+            this.header.addEventListener('mouseleave', () => this.showUI());
+          }
+
           document.getElementById('btn-lb-close').addEventListener('click', () => this.close());
 
           document.getElementById('btn-lb-download').addEventListener('click', () => {
@@ -5716,6 +5749,7 @@ if ($action) {
           this.mediaList = mediaList || [];
           this.currentIndex = startIndex || 0;
           this.el.classList.add('active');
+          this.showUI();
           this.loadCurrent();
         }
 
@@ -6905,7 +6939,6 @@ if ($action) {
 
               card.innerHTML = `
                 <div class="file-checkbox"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
-                <div class="file-star-btn ${isStarred ? 'active' : ''}" title="${isStarred ? 'Unstar' : 'Star'}">${starSvg}</div>
                 <div class="file-thumb" ${folderRatio}>${folderThumbHtml}</div>
                 <div class="file-info-overlay">
                   <div class="file-name"></div>
@@ -6914,6 +6947,7 @@ if ($action) {
                     <span>FOLDER</span>
                   </div>
                 </div>
+                <div class="file-star-btn ${isStarred ? 'active' : ''}" title="${isStarred ? 'Unstar' : 'Star'}">${starSvg}</div>
               `;
             } else {
               let thumbHtml = '';
@@ -6940,7 +6974,6 @@ if ($action) {
               card.oncontextmenu = (e) => app.showContextMenu(e, 'file', item.path, item.name, item.type);
               card.innerHTML = `
                 <div class="file-checkbox"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
-                <div class="file-star-btn ${isStarred ? 'active' : ''}" title="${isStarred ? 'Unstar' : 'Star'}">${starSvg}</div>
                 <div class="file-thumb" ${thumbRatio}>${thumbHtml}</div>
                 <div class="file-info-overlay">
                   <div class="file-name"></div>
@@ -6949,6 +6982,7 @@ if ($action) {
                     <span>${this.layout === 'list' ? ext.toUpperCase() : (item.width ? `${item.width}×${item.height}` : ext.toUpperCase())}</span>
                   </div>
                 </div>
+                <div class="file-star-btn ${isStarred ? 'active' : ''}" title="${isStarred ? 'Unstar' : 'Star'}">${starSvg}</div>
               `;
             }
 
