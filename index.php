@@ -1420,6 +1420,7 @@ if ($action) {
           'type'        => $type,
           'width'       => $width,
           'height'      => $height,
+          'thumb_image' => $isDir ? getFolderPreviewImage($full, $rel, $config) : null,
           'items_count' => $isDir ? count(array_diff(@scandir($full) ?: [], ['.', '..', '.gallery_cache'])) : 0
         ];
 
@@ -1914,10 +1915,41 @@ if ($action) {
     if ($ext === 'zip' && class_exists('ZipArchive')) {
       $zip = new ZipArchive();
       if ($zip->open($file) === true) {
+        $dirMap = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+          $entryName = $zip->getNameIndex($i);
+          $clean = ltrim(str_replace(['\\', '..'], ['/', ''], $entryName), '/');
+          if ($clean === '') continue;
+          $parts = explode('/', $clean);
+          $top = $parts[0];
+          if (!isset($dirMap[$top])) {
+            $checkPath = $destDir . DIRECTORY_SEPARATOR . $top;
+            if (file_exists($checkPath)) {
+              $fExt = pathinfo($top, PATHINFO_EXTENSION);
+              $fBase = pathinfo($top, PATHINFO_FILENAME);
+              $cnt = 1;
+              $newTop = $top;
+              while (file_exists($destDir . DIRECTORY_SEPARATOR . $newTop)) {
+                $newTop = $fExt ? "{$fBase}_({$cnt}).{$fExt}" : "{$fBase}_({$cnt})";
+                $cnt++;
+              }
+              $dirMap[$top] = $newTop;
+            } else {
+              $dirMap[$top] = $top;
+            }
+          }
+        }
+
         for ($i = 0; $i < $zip->numFiles; $i++) {
           $entryName = $zip->getNameIndex($i);
           $cleanEntry = ltrim(str_replace(['\\', '..'], ['/', ''], $entryName), '/');
           if ($cleanEntry === '') continue;
+
+          $parts = explode('/', $cleanEntry);
+          if (isset($dirMap[$parts[0]])) {
+            $parts[0] = $dirMap[$parts[0]];
+            $cleanEntry = implode('/', $parts);
+          }
 
           $isDir = substr($entryName, -1) === '/';
           $target = $destDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cleanEntry);
@@ -1928,7 +1960,6 @@ if ($action) {
             $targetParent = dirname($target);
             if (!is_dir($targetParent)) @mkdir($targetParent, 0777, true);
 
-            // Auto-increment duplicate name if file exists
             if (file_exists($target)) {
               $fExt = pathinfo($target, PATHINFO_EXTENSION);
               $fBase = pathinfo($target, PATHINFO_FILENAME);
@@ -1959,11 +1990,43 @@ if ($action) {
     } elseif (in_array($ext, ['tar', 'gz', 'tgz']) && class_exists('PharData')) {
       try {
         $phar = new PharData($file);
+        $dirMap = [];
         foreach (new RecursiveIteratorIterator($phar, RecursiveIteratorIterator::SELF_FIRST) as $item) {
           $subPath = ltrim(str_replace(['\\', '..'], ['/', ''], $item->getPathname()), '/');
           $rel = substr($subPath, strlen(realpath($file)));
           $cleanRel = ltrim(str_replace(['\\', '..'], ['/', ''], $rel), '/');
           if ($cleanRel === '') continue;
+          $parts = explode('/', $cleanRel);
+          $top = $parts[0];
+          if (!isset($dirMap[$top])) {
+            $checkPath = $destDir . DIRECTORY_SEPARATOR . $top;
+            if (file_exists($checkPath)) {
+              $fExt = pathinfo($top, PATHINFO_EXTENSION);
+              $fBase = pathinfo($top, PATHINFO_FILENAME);
+              $cnt = 1;
+              $newTop = $top;
+              while (file_exists($destDir . DIRECTORY_SEPARATOR . $newTop)) {
+                $newTop = $fExt ? "{$fBase}_({$cnt}).{$fExt}" : "{$fBase}_({$cnt})";
+                $cnt++;
+              }
+              $dirMap[$top] = $newTop;
+            } else {
+              $dirMap[$top] = $top;
+            }
+          }
+        }
+
+        foreach (new RecursiveIteratorIterator($phar, RecursiveIteratorIterator::SELF_FIRST) as $item) {
+          $subPath = ltrim(str_replace(['\\', '..'], ['/', ''], $item->getPathname()), '/');
+          $rel = substr($subPath, strlen(realpath($file)));
+          $cleanRel = ltrim(str_replace(['\\', '..'], ['/', ''], $rel), '/');
+          if ($cleanRel === '') continue;
+
+          $parts = explode('/', $cleanRel);
+          if (isset($dirMap[$parts[0]])) {
+            $parts[0] = $dirMap[$parts[0]];
+            $cleanRel = implode('/', $parts);
+          }
 
           $target = $destDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cleanRel);
 
@@ -4499,6 +4562,27 @@ if ($action) {
       .dm-item.danger:hover { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
       .dm-sep { height: 1px; background: var(--md-sys-color-outline-variant); margin: 0.3rem 0; }
   
+      .sidebar-resizer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 4px;
+        height: 100%;
+        cursor: col-resize;
+        z-index: 10;
+        transition: background 0.2s;
+      }
+      .sidebar-resizer:hover, .sidebar-resizer.resizing {
+        background: var(--md-sys-color-primary);
+      }
+
+      .btn-icon.active,
+      .toolbar-actions .btn-icon.active,
+      .toolbar-actions button[data-layout].active {
+        background: var(--md-sys-color-secondary-container) !important;
+        color: var(--md-sys-color-on-secondary-container) !important;
+      }
+
       .slider-container {
         padding: 0.6rem 0.8rem;
         display: flex;
@@ -4662,6 +4746,9 @@ if ($action) {
           <button class="btn-icon" id="btn-manga-desk" title="Manga Mode">
             <svg viewBox="0 0 24 24"><path d="M19 1L14 6V22L19 17V1M3 6V22L8 17H12V2H8L3 6M10 4.25C10 3.56 9.44 3 8.75 3S7.5 3.56 7.5 4.25 8.06 5.5 8.75 5.5 10 4.94 10 4.25Z"/></svg>
           </button>
+          <button class="btn-icon" id="btn-refresh-desk" title="Refresh">
+            <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          </button>
           <button class="btn-icon" id="btn-theme-desk" title="Toggle Theme">
             <svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
           </button>
@@ -4694,7 +4781,8 @@ if ($action) {
   
     <div class="app-body">
       <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
-      <aside class="sidebar" id="sidebar">
+      <aside class="sidebar" id="sidebar" style="position: relative;">
+        <div class="sidebar-resizer desktop-only" id="sidebar-resizer"></div>
         <div class="sidebar-section">
           <div class="sidebar-title">Drive Navigation</div>
           <div class="filter-group">
@@ -4790,6 +4878,7 @@ if ($action) {
       <div class="dm-item" id="dm-manga"><svg viewBox="0 0 24 24"><path d="M19 1L14 6V22L19 17V1M3 6V22L8 17H12V2H8L3 6M10 4.25C10 3.56 9.44 3 8.75 3S7.5 3.56 7.5 4.25 8.06 5.5 8.75 5.5 10 4.94 10 4.25Z"/></svg> Manga Mode</div>
       <div class="dm-item" id="dm-theme"><svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg> Toggle Theme</div>
       <div class="dm-item desktop-only" id="dm-shortcuts"><svg viewBox="0 0 24 24"><path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg> Keyboard Shortcuts</div>
+      <div class="dm-item" id="dm-refresh-mob"><svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Refresh</div>
       <div class="dm-item" id="dm-clear-cache"><svg viewBox="0 0 24 24"><path d="M15 16h4v2h-4zm0-8h7v2h-7zm0 4h6v2h-6zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/></svg> Clear Cache</div>
       <?php if ($config['auth_enabled']): ?>
         <?php if ($isAdmin): ?>
@@ -6160,6 +6249,45 @@ if ($action) {
           const openManga = () => mangaViewer.open();
           document.getElementById('btn-manga-desk').addEventListener('click', openManga);
           document.getElementById('dm-manga').addEventListener('click', openManga);
+
+          document.getElementById('btn-refresh-desk')?.addEventListener('click', () => this.refresh());
+          document.getElementById('dm-refresh-mob')?.addEventListener('click', () => {
+            this.dropdownMore.classList.remove('active');
+            this.refresh();
+          });
+
+          const driveSidebar = document.getElementById('sidebar');
+          const driveResizer = document.getElementById('sidebar-resizer');
+          if (driveSidebar && driveResizer) {
+            const savedDriveSidebarWidth = localStorage.getItem('pg_drive_sidebar_width');
+            if (savedDriveSidebarWidth && window.innerWidth > 768) {
+              driveSidebar.style.width = savedDriveSidebarWidth + 'px';
+            }
+
+            let isResizingDriveSidebar = false;
+            driveResizer.addEventListener('mousedown', (e) => {
+              isResizingDriveSidebar = true;
+              driveResizer.classList.add('resizing');
+              document.body.style.cursor = 'col-resize';
+              e.preventDefault();
+            });
+            document.addEventListener('mousemove', (e) => {
+              if (!isResizingDriveSidebar) return;
+              const newW = e.clientX - driveSidebar.getBoundingClientRect().left;
+              if (newW >= 200 && newW <= 600) {
+                driveSidebar.style.width = newW + 'px';
+              }
+            });
+            document.addEventListener('mouseup', () => {
+              if (isResizingDriveSidebar) {
+                isResizingDriveSidebar = false;
+                driveResizer.classList.remove('resizing');
+                document.body.style.cursor = 'default';
+                localStorage.setItem('pg_drive_sidebar_width', parseInt(driveSidebar.style.width, 10));
+                this.applyGridSizing();
+              }
+            });
+          }
   
           const fileInput = document.getElementById('file-uploader');
           const folderInput = document.getElementById('folder-uploader');
@@ -6321,9 +6449,15 @@ if ($action) {
   
           const scrollObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
-              if (entry.isIntersecting && this.renderLimit < this.filteredList.length) {
+              if (entry.isIntersecting) {
                 this.renderLimit += 25;
-                this.appendBatch();
+                if (this.currentSection === 'activity') {
+                  if (this.renderLimit < (this.rawActivities?.length || 0) + 25) this.renderActivityView();
+                } else if (this.currentSection === 'trash') {
+                  if (this.renderLimit < (this.rawTrash?.length || 0) + 25) this.renderTrashView();
+                } else if (this.renderLimit < this.filteredList.length + 25) {
+                  this.appendBatch();
+                }
               }
             });
           }, { root: document.getElementById('main-content'), rootMargin: '300px' });
@@ -6383,12 +6517,22 @@ if ($action) {
         setLayout(layout) {
           this.layout = layout;
           localStorage.setItem('pg_layout', layout);
-          document.querySelectorAll('[data-layout]').forEach(b => b.classList.remove('active'));
-          document.querySelector(`[data-layout="${layout}"]`)?.classList.add('active');
+          this.updateLayoutUI();
+          this.updateControlsVisibility();
           this.container.className = `gallery-container layout-${layout}`;
           this.applyGridSizing();
           this.renderLimit = 25;
           this.renderGallery();
+        }
+
+        updateLayoutUI() {
+          document.querySelectorAll('[data-layout]').forEach(b => {
+            if (b.dataset.layout === this.layout) {
+              b.classList.add('active');
+            } else {
+              b.classList.remove('active');
+            }
+          });
         }
   
         updateControlsVisibility() {
@@ -6415,7 +6559,8 @@ if ($action) {
           if (btnNewFile) btnNewFile.style.display = hideNewItems ? 'none' : 'flex';
     
           // Column slider visibility
-          const showCols = !isTrash && !isActivity;
+          const isList = this.layout === 'list';
+          const showCols = !isTrash && !isActivity && !isList;
           const deskCols = document.getElementById('desk-cols-container');
           const mobCols = document.getElementById('mobile-cols-container');
           const mobSep = document.getElementById('mobile-cols-sep');
@@ -6442,6 +6587,69 @@ if ($action) {
           if (this.layout === 'columns') {
             this.renderLimit = 25;
             this.renderGallery(true);
+          }
+        }
+  
+        async runServerTaskWithProgress(title, act, data, callback) {
+          const toastId = 'task_toast_' + Date.now();
+          const container = document.getElementById('toast-container');
+          const el = document.createElement('div');
+          el.className = 'toast';
+          el.id = toastId;
+          el.style.display = 'flex';
+          el.style.flexDirection = 'column';
+          el.style.alignItems = 'stretch';
+          el.style.gap = '0.4rem';
+          el.style.minWidth = '240px';
+          el.innerHTML = `
+            <div style="display:flex; justify-content:space-between; font-weight:600; font-size:0.8rem;">
+              <span id="${toastId}_label">${title}...</span>
+              <span id="${toastId}_pct">0%</span>
+            </div>
+            <div style="height:5px; width:100%; background:var(--md-sys-color-surface-container-high); border-radius:3px; overflow:hidden;">
+              <div id="${toastId}_bar" style="height:100%; width:0%; background:var(--md-sys-color-primary); transition:width 0.2s linear;"></div>
+            </div>
+          `;
+          container.appendChild(el);
+
+          let pct = 0;
+          const interval = setInterval(() => {
+            pct += (90 - pct) * 0.1;
+            const pctEl = document.getElementById(`${toastId}_pct`);
+            const barEl = document.getElementById(`${toastId}_bar`);
+            if (pctEl) pctEl.innerText = Math.round(pct) + '%';
+            if (barEl) barEl.style.width = pct + '%';
+          }, 500);
+
+          try {
+            const fd = new FormData();
+            fd.append('action', act);
+            for (let k in data) {
+              if (Array.isArray(data[k])) {
+                data[k].forEach(val => fd.append(`${k}[]`, val));
+              } else {
+                fd.append(k, data[k]);
+              }
+            }
+            const res = await fetch('', { method: 'POST', body: fd });
+            const json = await res.json();
+            clearInterval(interval);
+            const pctEl = document.getElementById(`${toastId}_pct`);
+            const barEl = document.getElementById(`${toastId}_bar`);
+            if (pctEl) pctEl.innerText = '100%';
+            if (barEl) barEl.style.width = '100%';
+            
+            setTimeout(() => el.remove(), 1500);
+            
+            if (json.success) {
+              if (callback) callback(json);
+            } else {
+              throw new Error(json.error || 'Failed');
+            }
+          } catch (e) {
+            clearInterval(interval);
+            el.innerHTML = `<span style="color:var(--md-sys-color-error);">${e.message}</span>`;
+            setTimeout(() => el.remove(), 3500);
           }
         }
   
@@ -6612,12 +6820,16 @@ if ($action) {
           }
 
           if (!hasValidCache) {
-            this.container.innerHTML = `
-              <div class="center-state">
-                <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-                <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading files...</div>
-              </div>
-            `;
+            if (this.container.querySelector('.file-card')) {
+              this.container.style.opacity = '0.6';
+            } else {
+              this.container.innerHTML = `
+                <div class="center-state">
+                  <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+                  <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading files...</div>
+                </div>
+              `;
+            }
           }
 
           try {
@@ -6653,12 +6865,18 @@ if ($action) {
   
         async performSearch(query) {
           this.isSearching = true;
+          this.renderLimit = 25;
+          if (this.currentSection === 'activity') {
+            this.renderActivityView();
+            return;
+          }
+          if (this.currentSection === 'trash') {
+            this.renderTrashView();
+            return;
+          }
+
           this.dirStats.innerText = `Searching for "${query}" in subfolders...`;
-          this.container.innerHTML = `
-            <div class="center-state">
-              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-            </div>
-          `;
+          this.container.style.opacity = '0.6';
   
           try {
             const res = await fetch(`?action=search&dir=${encodeURIComponent(this.currentPath)}&q=${encodeURIComponent(query)}`);
@@ -6676,6 +6894,7 @@ if ($action) {
             this.dirTitle.innerText = `Search: "${query}"`;
             this.dirStats.innerText = `${results.count} matching item(s) found`;
   
+            this.container.style.opacity = '1';
             this.container.innerHTML = '';
             this.renderedCount = 0;
             this.renderLimit = 25;
@@ -6806,6 +7025,9 @@ if ($action) {
         }
   
         renderGallery(preserveScroll = false) {
+          this.updateLayoutUI();
+          this.updateControlsVisibility();
+          this.container.style.opacity = '1';
           this.container.className = `gallery-container layout-${this.layout}`;
           const toolbar = document.querySelector('.toolbar-actions');
           if (toolbar && this.currentSection !== 'trash' && this.currentSection !== 'activity') {
@@ -7154,8 +7376,7 @@ if ($action) {
           if (!items.length) return;
           const defaultName = (items.length === 1 ? items[0].split('/').pop() : 'archive') + '.zip';
           this.showInputModal('Compress Items', 'Archive Filename (.zip)', defaultName, (zipName) => {
-            this.toast('Creating archive...');
-            this.api('zip', {
+            this.runServerTaskWithProgress('Compressing items', 'zip', {
               dir: this.currentPath || '',
               items: items,
               zip_name: zipName || defaultName,
@@ -7554,11 +7775,15 @@ if ($action) {
           const toolbar = document.querySelector('.toolbar-actions');
           if (toolbar) toolbar.style.display = 'none';
 
-          this.container.innerHTML = `
-            <div class="center-state">
-              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-            </div>
-          `;
+          if (this.container.querySelector('.activity-row')) {
+            this.container.style.opacity = '0.6';
+          } else {
+            this.container.innerHTML = `
+              <div class="center-state">
+                <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+              </div>
+            `;
+          }
 
           try {
             const res = await fetch('?action=activity_list');
@@ -7588,8 +7813,14 @@ if ($action) {
         }
 
         renderActivityView() {
+          this.container.style.opacity = '1';
           const stats = this.activityStats || {};
           let activities = this.rawActivities || [];
+
+          if (this.searchQuery) {
+            const q = this.searchQuery.toLowerCase();
+            activities = activities.filter(act => (act.name || '').toLowerCase().includes(q) || (act.path || '').toLowerCase().includes(q));
+          }
 
           if (this.filter && this.filter !== 'all') {
             activities = activities.filter(act => {
@@ -7625,7 +7856,8 @@ if ($action) {
             return;
           }
 
-          let rowsHtml = activities.map(act => {
+          const toRender = activities.slice(0, this.renderLimit);
+          let rowsHtml = toRender.map(act => {
             const d = act.timestamp ? new Date(act.timestamp * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
             const actType = act.action || 'modified';
             return `
@@ -7662,7 +7894,8 @@ if ($action) {
           this.isSearching = false;
           this.dirTitle.innerText = 'Recents';
           this.dirStats.innerText = 'Chronologically sorted from newest to oldest';
-          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
+          if (this.container.querySelector('.file-card')) this.container.style.opacity = '0.6';
+          else this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
 
           try {
             const res = await fetch('?action=recents_list');
@@ -7706,7 +7939,8 @@ if ($action) {
           this.isSearching = false;
           this.dirTitle.innerText = 'Starred Items';
           this.dirStats.innerText = 'Quick access to your favorite files and folders';
-          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
+          if (this.container.querySelector('.file-card')) this.container.style.opacity = '0.6';
+          else this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
 
           try {
             const res = await fetch('?action=starred_list');
@@ -7783,97 +8017,114 @@ if ($action) {
           const toolbar = document.querySelector('.toolbar-actions');
           if (toolbar) toolbar.style.display = 'none';
 
-          // Reset container layout so it doesn't inherit masonry flex columns
           this.container.className = 'gallery-container layout-grid';
           this.container.removeAttribute('data-cols');
-          this.container.innerHTML = `
-            <div class="center-state">
-              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-            </div>
-          `;
+
+          if (this.container.querySelector('.center-state')) {
+            this.container.innerHTML = `
+              <div class="center-state">
+                <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+              </div>
+            `;
+          } else {
+            this.container.style.opacity = '0.6';
+          }
 
           try {
             const res = await fetch('?action=trash_list');
             const data = await res.json();
-            const items = data.trash || [];
+            this.rawTrash = data.trash || [];
 
-            // Calculate live category badge breakdown for items in trash
-            const trashFiles = items.filter(i => !i.is_dir).map(i => {
+            const trashFiles = this.rawTrash.filter(i => !i.is_dir).map(i => {
               const ext = (i.original_name.split('.').pop() || '').toLowerCase();
               return { type: this.getFileTypeByExt(ext) };
             });
-            this.data = { folders: items.filter(i => i.is_dir), files: trashFiles, stats: {} };
+            this.data = { folders: this.rawTrash.filter(i => i.is_dir), files: trashFiles, stats: {} };
             this.updateBadges();
 
-            if (this.filter && this.filter !== 'all') {
-              items = items.filter(i => {
-                if (i.is_dir) return false;
-                const ext = (i.original_name.split('.').pop() || '').toLowerCase();
-                return this.getFileTypeByExt(ext) === this.filter;
-              });
-            }
-
-            if (!items.length) {
-              this.container.innerHTML = `
-                <div class="center-state" style="grid-column: 1 / -1; padding: 3.5rem 0;">
-                  <svg viewBox="0 0 24 24" style="width:64px; height:64px; opacity:0.3; color:var(--md-sys-color-outline); margin-bottom:0.6rem;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                  <div style="font-weight:700; font-size:1.1rem; color:var(--md-sys-color-on-surface);">Trash is Empty</div>
-                  <div style="font-size:0.82rem; color:var(--md-sys-color-on-surface-variant);">Deleted files and folders will appear here.</div>
-                </div>
-              `;
-              return;
-            }
-
-            let html = `
-              <div style="grid-column: 1 / -1; display:flex; justify-content:space-between; align-items:center; background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:16px; padding:0.75rem 1.1rem; margin-bottom:0.6rem;">
-                <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; color:var(--md-sys-color-on-surface-variant);">
-                  <span style="font-weight:700; color:var(--md-sys-color-on-surface); font-size:0.95rem;">${items.length}</span> item(s) in trash
-                </div>
-                <button class="btn-primary" style="background:#dc2626; height:34px; padding:0 0.95rem; font-size:0.8rem; gap:0.4rem;" onclick="app.emptyTrash()">
-                  <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                  Empty Trash
-                </button>
-              </div>
-              <div style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:0.55rem; width:100%;">
-            `;
-
-            items.forEach(t => {
-              const d = t.trashed_at ? new Date(t.trashed_at * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-              const icon = t.is_dir
-                ? '<svg viewBox="0 0 16 16" style="width:22px;height:22px;color:#f59e0b;flex-shrink:0;"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>'
-                : '<svg viewBox="0 0 24 24" style="width:22px;height:22px;color:var(--md-sys-color-primary);flex-shrink:0;"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>';
-
-              const safeName = this.escapeHtml(t.original_name);
-              const safeRel = this.escapeHtml(t.original_rel);
-              const paramName = safeName.replace(/'/g, "\\'");
-
-              html += `
-                <div style="background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:14px; padding:0.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:0.85rem;">
-                  <div style="display:flex; align-items:center; gap:0.75rem; min-width:0; flex:1;">
-                    ${icon}
-                    <div style="display:flex; flex-direction:column; gap:0.15rem; min-width:0; overflow:hidden;">
-                      <span style="font-weight:600; font-size:0.88rem; color:var(--md-sys-color-on-surface); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeName}</span>
-                      <span style="font-size:0.72rem; color:var(--md-sys-color-on-surface-variant); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Original: ${safeRel} ${d ? '• Trashed ' + d : ''}</span>
-                    </div>
-                  </div>
-                  <div style="display:flex; align-items:center; gap:0.4rem; flex-shrink:0;">
-                    <button class="btn-primary" style="height:32px; padding:0 0.75rem; font-size:0.78rem; gap:0.35rem;" onclick="app.restoreTrashItem('${t.trash_name}', '${paramName}')">
-                      <svg viewBox="0 0 24 24" style="width:14px; height:14px;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-                      Restore
-                    </button>
-                    <button class="btn-icon" style="width:32px; height:32px; border-radius:8px; color:var(--md-sys-color-error);" title="Delete Permanently" onclick="app.deleteTrashItemPermanently('${t.trash_name}', '${paramName}')">
-                      <svg viewBox="0 0 24 24" style="width:16px; height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                    </button>
-                  </div>
-                </div>
-              `;
-            });
-
-            html += `</div>`;
-            this.container.innerHTML = html;
+            this.renderTrashView();
           } catch (e) {
+            this.container.style.opacity = '1';
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
+        }
+
+        renderTrashView() {
+          this.container.style.opacity = '1';
+          let items = this.rawTrash || [];
+
+          if (this.searchQuery) {
+            const q = this.searchQuery.toLowerCase();
+            items = items.filter(i => (i.original_name || '').toLowerCase().includes(q) || (i.original_rel || '').toLowerCase().includes(q));
+          }
+
+          if (this.filter && this.filter !== 'all') {
+            items = items.filter(i => {
+              if (i.is_dir) return false;
+              const ext = (i.original_name.split('.').pop() || '').toLowerCase();
+              return this.getFileTypeByExt(ext) === this.filter;
+            });
+          }
+
+          if (!items.length) {
+            this.container.innerHTML = `
+              <div class="center-state" style="grid-column: 1 / -1; padding: 3.5rem 0;">
+                <svg viewBox="0 0 24 24" style="width:64px; height:64px; opacity:0.3; color:var(--md-sys-color-outline); margin-bottom:0.6rem;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                <div style="font-weight:700; font-size:1.1rem; color:var(--md-sys-color-on-surface);">Trash is Empty</div>
+                <div style="font-size:0.82rem; color:var(--md-sys-color-on-surface-variant);">Deleted files and folders will appear here.</div>
+              </div>
+            `;
+            return;
+          }
+
+          let html = `
+            <div style="grid-column: 1 / -1; display:flex; justify-content:space-between; align-items:center; background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:16px; padding:0.75rem 1.1rem; margin-bottom:0.6rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; color:var(--md-sys-color-on-surface-variant);">
+                <span style="font-weight:700; color:var(--md-sys-color-on-surface); font-size:0.95rem;">${items.length}</span> item(s) in trash
+              </div>
+              <button class="btn-primary" style="background:#dc2626; height:34px; padding:0 0.95rem; font-size:0.8rem; gap:0.4rem;" onclick="app.emptyTrash()">
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                Empty Trash
+              </button>
+            </div>
+            <div style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:0.55rem; width:100%;">
+          `;
+
+          const toRender = items.slice(0, this.renderLimit);
+          toRender.forEach(t => {
+            const d = t.trashed_at ? new Date(t.trashed_at * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+            const icon = t.is_dir
+              ? '<svg viewBox="0 0 16 16" style="width:22px;height:22px;color:#f59e0b;flex-shrink:0;"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>'
+              : '<svg viewBox="0 0 24 24" style="width:22px;height:22px;color:var(--md-sys-color-primary);flex-shrink:0;"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>';
+
+            const safeName = this.escapeHtml(t.original_name);
+            const safeRel = this.escapeHtml(t.original_rel);
+            const paramName = safeName.replace(/'/g, "\\'");
+
+            html += `
+              <div style="background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:14px; padding:0.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:0.85rem;">
+                <div style="display:flex; align-items:center; gap:0.75rem; min-width:0; flex:1;">
+                  ${icon}
+                  <div style="display:flex; flex-direction:column; gap:0.15rem; min-width:0; overflow:hidden;">
+                    <span style="font-weight:600; font-size:0.88rem; color:var(--md-sys-color-on-surface); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeName}</span>
+                    <span style="font-size:0.72rem; color:var(--md-sys-color-on-surface-variant); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Original: ${safeRel} ${d ? '• Trashed ' + d : ''}</span>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.4rem; flex-shrink:0;">
+                  <button class="btn-primary" style="height:32px; padding:0 0.75rem; font-size:0.78rem; gap:0.35rem;" onclick="app.restoreTrashItem('${t.trash_name}', '${paramName}')">
+                    <svg viewBox="0 0 24 24" style="width:14px; height:14px;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                    Restore
+                  </button>
+                  <button class="btn-icon" style="width:32px; height:32px; border-radius:8px; color:var(--md-sys-color-error);" title="Delete Permanently" onclick="app.deleteTrashItemPermanently('${t.trash_name}', '${paramName}')">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  </button>
+                </div>
+              </div>
+            `;
+          });
+
+          html += `</div>`;
+          this.container.innerHTML = html;
         }
 
         restoreTrashItem(trashId, originalName) {
@@ -8217,7 +8468,7 @@ if ($action) {
             addItem('<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Download', () => this.downloadZipWithProgress(`?action=download_zip&dir=${encodeURIComponent(path)}`, null, `${name}.zip`));
             addItem('<svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>', 'Compress to ZIP', () => {
               this.showInputModal('Compress Folder', 'Archive Filename (.zip)', `${name}.zip`, (zipName) => {
-                this.api('zip', { dir: this.currentPath || '', items: [path], zip_name: zipName || `${name}.zip` }, () => {
+                this.runServerTaskWithProgress('Compressing folder', 'zip', { dir: this.currentPath || '', items: [path], zip_name: zipName || `${name}.zip` }, () => {
                   this.toast('Folder compressed');
                   this.refresh();
                 });
@@ -8243,7 +8494,7 @@ if ($action) {
               addItem('<svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>', 'Compress to ZIP', () => {
                 const baseName = name.replace(/\.[^/.]+$/, '');
                 this.showInputModal('Compress File', 'Archive Filename (.zip)', `${baseName}.zip`, (zipName) => {
-                  this.api('zip', { dir: this.currentPath || '', items: [path], zip_name: zipName || `${baseName}.zip` }, () => {
+                  this.runServerTaskWithProgress('Compressing file', 'zip', { dir: this.currentPath || '', items: [path], zip_name: zipName || `${baseName}.zip` }, () => {
                     this.toast('File compressed');
                     this.refresh();
                   });
@@ -8360,8 +8611,7 @@ if ($action) {
         }
 
         unzipItem(path) {
-          this.toast('Extracting archive...');
-          this.api('unzip', { f: path }, () => {
+          this.runServerTaskWithProgress('Extracting archive', 'unzip', { f: path }, () => {
             this.toast('Archive extracted successfully');
             this.refresh();
           });
