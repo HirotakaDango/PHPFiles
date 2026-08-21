@@ -833,6 +833,59 @@ if ($action) {
     ]);
   }
 
+  if ($action === 'gallery_list') {
+    $maxResults = 2000;
+    $foundFiles = [];
+    $rootLen = strlen(realpath($config['root_dir']));
+    $cacheReal = realpath($config['cache_dir']);
+    $trashReal = realpath($config['trash_dir']);
+
+    $flags = FilesystemIterator::SKIP_DOTS | FilesystemIterator::FOLLOW_SYMLINKS;
+    $dirIterator = new RecursiveDirectoryIterator($config['root_dir'], $flags);
+    $filterIterator = new RecursiveCallbackFilterIterator($dirIterator, function ($current) use ($cacheReal, $trashReal) {
+      $path = $current->getPathname();
+      $filename = $current->getFilename();
+      if ($filename[0] === '.' || ($cacheReal && strpos($path, $cacheReal) === 0) || ($trashReal && strpos($path, $trashReal) === 0)) {
+        return false;
+      }
+      return true;
+    });
+
+    $iterator = new RecursiveIteratorIterator($filterIterator, RecursiveIteratorIterator::SELF_FIRST);
+    $iterator->setMaxDepth(10);
+
+    $count = 0;
+    foreach ($iterator as $item) {
+      if ($item->isDir()) continue;
+      $ext = strtolower($item->getExtension());
+      if (in_array($ext, $config['image_extensions'])) {
+        if ($count >= $maxResults) break;
+        $size = $item->getSize();
+        $rel = ltrim(str_replace(['\\', '//'], '/', substr($item->getRealPath(), $rootLen)), '/');
+        $foundFiles[] = [
+          'name'     => $item->getFilename(),
+          'path'     => $rel,
+          'size'     => $size,
+          'size_fmt' => formatBytes($size),
+          'mtime'    => $item->getMTime(),
+          'ext'      => $ext,
+          'type'     => 'image',
+          'width'    => 0,
+          'height'   => 0
+        ];
+        $count++;
+      }
+    }
+
+    usort($foundFiles, fn($a, $b) => $b['mtime'] - $a['mtime']);
+
+    jsonResponse([
+      'folders' => [],
+      'files'   => $foundFiles,
+      'stats'   => ['files' => count($foundFiles), 'folders' => 0, 'total_size' => '']
+    ]);
+  }
+
   if ($action === 'tree') {
     function buildTree($base, $currentRel = '', $depth = 0) {
       if ($depth > 3) return [];
@@ -1886,13 +1939,16 @@ if ($action) {
       jsonResponse(['error' => 'Cannot create zip archive'], 500);
     }
 
+    $parentBase = realpath($parent);
     foreach ($items as $rel) {
       $full = safePath($config['root_dir'], $rel);
       if ($full && file_exists($full)) {
         if (is_dir($full)) {
           $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($full, RecursiveDirectoryIterator::SKIP_DOTS));
           foreach ($files as $f) {
-            $zip->addFile($f->getPathname(), substr($f->getPathname(), strlen($parent) + 1));
+            if (!$f->isFile()) continue;
+            $localName = ltrim(str_replace(['\\', '//'], '/', substr($f->getRealPath(), strlen($parentBase))), '/');
+            $zip->addFile($f->getRealPath(), $localName);
           }
         } else {
           $zip->addFile($full, basename($full));
@@ -2112,6 +2168,9 @@ if ($action) {
     $zip = new ZipArchive();
     $zip->open($tempZip, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 
+    $dirBase = realpath($dir);
+    $cacheBase = realpath($config['cache_dir']);
+
     if ($items && is_array($items)) {
       foreach ($items as $rel) {
         $full = safePath($config['root_dir'], $rel);
@@ -2119,8 +2178,10 @@ if ($action) {
           if (is_dir($full)) {
             $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($full, RecursiveDirectoryIterator::SKIP_DOTS));
             foreach ($files as $f) {
-              if (strpos($f->getPathname(), realpath($config['cache_dir'])) === 0) continue;
-              $zip->addFile($f->getPathname(), substr($f->getPathname(), strlen($dir) + 1));
+              if (!$f->isFile()) continue;
+              if ($cacheBase && strpos($f->getRealPath(), $cacheBase) === 0) continue;
+              $localName = ltrim(str_replace(['\\', '//'], '/', substr($f->getRealPath(), strlen($dirBase))), '/');
+              $zip->addFile($f->getRealPath(), $localName);
             }
           } else {
             $zip->addFile($full, basename($full));
@@ -2130,8 +2191,10 @@ if ($action) {
     } else {
       $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS));
       foreach ($files as $f) {
-        if (strpos($f->getPathname(), realpath($config['cache_dir'])) === 0) continue;
-        $zip->addFile($f->getPathname(), substr($f->getPathname(), strlen($dir) + 1));
+        if (!$f->isFile()) continue;
+        if ($cacheBase && strpos($f->getRealPath(), $cacheBase) === 0) continue;
+        $localName = ltrim(str_replace(['\\', '//'], '/', substr($f->getRealPath(), strlen($dirBase))), '/');
+        $zip->addFile($f->getRealPath(), $localName);
       }
     }
     $zip->close();
@@ -4797,6 +4860,9 @@ if ($action) {
             <div class="filter-item active" id="nav-home" onclick="app.switchDriveSection('home')">
               <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg> Home</span>
             </div>
+            <div class="filter-item" id="nav-gallery" onclick="app.switchDriveSection('gallery')">
+              <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z"/></svg> Gallery</span>
+            </div>
             <div class="filter-item" id="nav-recents" onclick="app.switchDriveSection('recents')">
               <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg> Recents</span>
             </div>
@@ -6564,8 +6630,9 @@ if ($action) {
           const isStarred = this.currentSection === 'starred';
           const isTrash = this.currentSection === 'trash';
           const isActivity = this.currentSection === 'activity';
-          const hideUpload = isStarred || isTrash || isActivity;
-          const hideNewItems = isStarred || isTrash || isActivity;
+          const isGallery = this.currentSection === 'gallery';
+          const hideUpload = isStarred || isTrash || isActivity || isGallery;
+          const hideNewItems = isStarred || isTrash || isActivity || isGallery;
     
           // Desktop Upload Button
           const btnUploadDesk = document.getElementById('btn-upload-desk');
@@ -6722,7 +6789,7 @@ if ($action) {
           try { decoded = decodeURIComponent(raw); } catch (e) { decoded = raw; }
           decoded = decoded.replace(/^\/+|\/+$/g, '').replace(/\.part$/i, '');
 
-          const specialSections = ['recents', 'starred', 'activity', 'trash'];
+          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
           const lowerDecoded = decoded.toLowerCase();
 
           if (specialSections.includes(lowerDecoded)) {
@@ -6760,7 +6827,7 @@ if ($action) {
               return;
             }
 
-            const specialSections = ['recents', 'starred', 'activity', 'trash'];
+            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
             if (this.currentSection && specialSections.includes(this.currentSection)) {
               this.originSection = this.currentSection;
               this.openFile(targetFile, false);
@@ -6897,6 +6964,33 @@ if ($action) {
           }
           if (this.currentSection === 'trash') {
             this.renderTrashView();
+            return;
+          }
+
+          if (this.currentSection === 'gallery') {
+            this.filteredList = this.data.files.filter(f => f.name.toLowerCase().includes(query.toLowerCase()));
+            this.filteredList = this.applySort(this.filteredList);
+            this.dirTitle.innerText = `Gallery Search: "${query}"`;
+            this.dirStats.innerText = `${this.filteredList.length} matching photo(s) found`;
+            this.container.innerHTML = '';
+            this.renderedCount = 0;
+            this.renderLimit = 25;
+            this.masonryCols = [];
+            this.hasUpCard = false;
+            if (this.layout === 'columns') {
+              const numCols = this.getMasonryColCount();
+              for (let i = 0; i < numCols; i++) {
+                const col = document.createElement('div');
+                col.className = 'masonry-col';
+                this.container.appendChild(col);
+                this.masonryCols.push(col);
+              }
+            }
+            if (!this.filteredList.length) {
+              this.container.innerHTML = `<div class="center-state"><p>No matching photos found</p></div>`;
+              return;
+            }
+            this.appendBatch();
             return;
           }
 
@@ -7092,6 +7186,9 @@ if ($action) {
             this.dirTitle.innerText = 'File Activity';
           } else if (this.currentSection === 'trash') {
             this.dirTitle.innerText = 'Trash Bin';
+          } else if (this.currentSection === 'gallery') {
+            this.dirTitle.innerText = 'Gallery';
+            this.dirStats.innerText = `${filteredFiles.length} Photos`;
           } else {
             this.dirTitle.innerText = this.data.path ? this.data.path.split('/').pop() : this.appTitle;
             this.dirStats.innerText = `${filteredFolders.length} Folders, ${filteredFiles.length} Files (${this.data.stats?.total_size || '0 B'})`;
@@ -7458,6 +7555,8 @@ if ($action) {
             html += `<span class="bc-sep">/</span><a href="#/activity" class="bc-item active">File Activity</a>`;
           } else if (this.currentSection === 'trash') {
             html += `<span class="bc-sep">/</span><a href="#/trash" class="bc-item active">Trash Bin</a>`;
+          } else if (this.currentSection === 'gallery') {
+            html += `<span class="bc-sep">/</span><a href="#/gallery" class="bc-item active">Gallery</a>`;
           } else if (this.currentPath) {
             const parts = this.currentPath.split('/');
             let accum = '';
@@ -7762,7 +7861,7 @@ if ($action) {
           this.currentSection = section;
           this.sidebar.classList.remove('open');
           this.sidebarBackdrop.classList.remove('active');
-          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash').forEach(el => el.classList.remove('active'));
+          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash, #nav-gallery').forEach(el => el.classList.remove('active'));
           document.getElementById(`nav-${section}`)?.classList.add('active');
 
           this.filter = 'all';
@@ -7782,6 +7881,39 @@ if ($action) {
             this.loadActivity();
           } else if (section === 'trash') {
             this.loadTrash();
+          } else if (section === 'gallery') {
+            this.loadGallery();
+          }
+        }
+
+        async loadGallery() {
+          this.currentSection = 'gallery';
+          this.updateControlsVisibility();
+          this.currentPath = '';
+          this.selectedItems.clear();
+          this.updateBatchBar();
+          this.renderLimit = 25;
+          this.isSearching = false;
+          this.dirTitle.innerText = 'Gallery';
+          this.dirStats.innerText = 'All photos across your drive';
+          if (this.container.querySelector('.file-card')) this.container.style.opacity = '0.6';
+          else this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
+
+          try {
+            const res = await fetch('?action=gallery_list');
+            const data = await res.json();
+            this.data = {
+              folders: [],
+              files: data.files || [],
+              stats: { total_size: '', files: (data.files || []).length, folders: 0 },
+              path: ''
+            };
+            this.renderGallery();
+            this.updateBreadcrumbs();
+            this.updateBadges();
+            this.updateDocTitle('Gallery', this.data.files.length);
+          } catch (e) {
+            this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
         }
 
@@ -8782,6 +8914,8 @@ if ($action) {
             this.loadActivity();
           } else if (this.currentSection === 'trash') {
             this.loadTrash();
+          } else if (this.currentSection === 'gallery') {
+            this.loadGallery();
           } else {
             this.loadDir(this.currentPath);
           }
@@ -8865,8 +8999,8 @@ if ($action) {
           this.activeModalPath = '';
           if (window.hdmEngine) window.hdmEngine.activePath = '';
 
-          // If opened from a dedicated section (recents, starred, activity, trash), return to it
-          const specialSections = ['recents', 'starred', 'activity', 'trash'];
+          // If opened from a dedicated section (recents, starred, activity, trash, gallery), return to it
+          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
           const returnSection = (this.originSection && specialSections.includes(this.originSection))
             ? this.originSection
             : (this.currentSection && specialSections.includes(this.currentSection) ? this.currentSection : null);
