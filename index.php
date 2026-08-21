@@ -2498,7 +2498,7 @@ if ($action) {
       .sidebar-backdrop.active { display: block; }
   
       .sidebar {
-        width: 280px;
+        width: var(--sidebar-width, 280px);
         background: var(--md-sys-color-surface-container-low);
         display: flex;
         flex-direction: column;
@@ -2507,9 +2507,10 @@ if ($action) {
         transition: margin-left 0.25s cubic-bezier(0.2, 0, 0, 1), transform 0.25s cubic-bezier(0.2, 0, 0, 1);
         z-index: 150;
         border-right: 1px solid var(--md-sys-color-outline-variant);
+        position: relative;
       }
       .sidebar.collapsed {
-        margin-left: -280px;
+        margin-left: calc(-1 * var(--sidebar-width, 280px));
       }
       .sidebar-section {
         padding: 1rem;
@@ -4700,15 +4701,22 @@ if ($action) {
       @media (max-width: 768px) {
         .desktop-only { display: none !important; }
         .mobile-only { display: flex !important; }
-        .sidebar {
-          position: fixed;
-          inset: 0 auto 0 0;
-          transform: translateX(-100%);
-          box-shadow: var(--md-elevation-2);
-          width: 280px;
-          height: 100dvh;
+        .sidebar,
+        .sidebar.collapsed {
+          margin-left: 0 !important;
         }
-        .sidebar.open { transform: translateX(0); }
+        .sidebar {
+          position: fixed !important;
+          inset: 0 auto 0 0 !important;
+          transform: translateX(-100%) !important;
+          box-shadow: var(--md-elevation-2);
+          width: 280px !important;
+          height: 100dvh !important;
+        }
+        .sidebar.open,
+        .sidebar.collapsed.open {
+          transform: translateX(0) !important;
+        }
         .layout-columns { column-count: 2; }
         .main-content { padding: 0.6rem 0.6rem 0 0.6rem; }
       }
@@ -4781,7 +4789,7 @@ if ($action) {
   
     <div class="app-body">
       <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
-      <aside class="sidebar" id="sidebar" style="position: relative;">
+      <aside class="sidebar" id="sidebar">
         <div class="sidebar-resizer desktop-only" id="sidebar-resizer"></div>
         <div class="sidebar-section">
           <div class="sidebar-title">Drive Navigation</div>
@@ -4823,12 +4831,7 @@ if ($action) {
       </aside>
   
       <main class="main-content" id="main-content">
-        <div class="content-header">
-          <div class="dir-info">
-            <h1 id="dir-title">PHPFiles</h1>
-            <div class="dir-stats" id="dir-stats">Loading...</div>
-          </div>
-  
+        <div class="content-header" style="justify-content: flex-end; margin-bottom: 0.5rem;">
           <div class="toolbar-actions">
             <button class="btn-icon active" data-layout="grid" title="Grid Layout">
               <svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zm0 10h8v8H3zM13 3h8v8h-8zm0 10h8v8h-8z"/></svg>
@@ -4856,6 +4859,11 @@ if ($action) {
               <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
             </button>
           </div>
+        </div>
+
+        <div class="dir-info" style="margin-bottom: 1rem; width: 100%;">
+          <h1 id="dir-title">PHPFiles</h1>
+          <div class="dir-stats" id="dir-stats">Loading...</div>
         </div>
   
         <div class="gallery-container layout-grid" id="gallery-container"></div>
@@ -6064,11 +6072,27 @@ if ($action) {
         bindEvents() {
           document.getElementById('btn-sidebar').addEventListener('click', () => {
             if (window.innerWidth <= 768) {
+              this.sidebar.classList.remove('collapsed');
               this.sidebar.classList.toggle('open');
               this.sidebarBackdrop.classList.toggle('active');
             } else {
+              this.sidebar.classList.remove('open');
               this.sidebar.classList.toggle('collapsed');
               localStorage.setItem('pg_sidebar_collapsed', this.sidebar.classList.contains('collapsed') ? '1' : '0');
+            }
+          });
+
+          window.addEventListener('resize', () => {
+            if (window.innerWidth > 768) {
+              this.sidebar.classList.remove('open');
+              this.sidebarBackdrop.classList.remove('active');
+              if (localStorage.getItem('pg_sidebar_collapsed') === '1') {
+                this.sidebar.classList.add('collapsed');
+              } else {
+                this.sidebar.classList.remove('collapsed');
+              }
+            } else {
+              this.sidebar.classList.remove('collapsed');
             }
           });
 
@@ -6261,7 +6285,7 @@ if ($action) {
           if (driveSidebar && driveResizer) {
             const savedDriveSidebarWidth = localStorage.getItem('pg_drive_sidebar_width');
             if (savedDriveSidebarWidth && window.innerWidth > 768) {
-              driveSidebar.style.width = savedDriveSidebarWidth + 'px';
+              driveSidebar.style.setProperty('--sidebar-width', savedDriveSidebarWidth + 'px');
             }
 
             let isResizingDriveSidebar = false;
@@ -6275,7 +6299,7 @@ if ($action) {
               if (!isResizingDriveSidebar) return;
               const newW = e.clientX - driveSidebar.getBoundingClientRect().left;
               if (newW >= 200 && newW <= 600) {
-                driveSidebar.style.width = newW + 'px';
+                driveSidebar.style.setProperty('--sidebar-width', newW + 'px');
               }
             });
             document.addEventListener('mouseup', () => {
@@ -6283,7 +6307,8 @@ if ($action) {
                 isResizingDriveSidebar = false;
                 driveResizer.classList.remove('resizing');
                 document.body.style.cursor = 'default';
-                localStorage.setItem('pg_drive_sidebar_width', parseInt(driveSidebar.style.width, 10));
+                const currentW = getComputedStyle(driveSidebar).getPropertyValue('--sidebar-width').replace('px', '').trim();
+                if (currentW) localStorage.setItem('pg_drive_sidebar_width', currentW);
                 this.applyGridSizing();
               }
             });
