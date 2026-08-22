@@ -2926,7 +2926,8 @@ if ($action) {
         flex-direction: column;
         gap: 0.15rem;
         min-width: 0;
-        flex: 1;
+        flex-shrink: 0;
+        width: 100%;
       }
       .dir-info h1 {
         font-size: 1.3rem;
@@ -3473,24 +3474,28 @@ if ($action) {
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 45dvh;
+        min-height: 35dvh;
         grid-column: 1 / -1;
         color: var(--md-sys-color-on-surface-variant);
         text-align: center;
-        gap: 0.75rem;
+        gap: 0.9rem;
+        padding: 2.5rem 1rem;
       }
-  
-      .m3-spinner {
-        width: 40px;
-        height: 40px;
-        animation: m3-rotate 2s linear infinite;
+
+      .m3-spinner,
+      svg.m3-spinner {
+        width: 52px !important;
+        height: 52px !important;
+        animation: m3-rotate 1.4s linear infinite;
         display: block;
-        margin: auto;
+        margin: 0 auto;
+        flex-shrink: 0;
       }
       .m3-spinner circle {
         stroke: var(--md-sys-color-primary);
         stroke-linecap: round;
-        animation: m3-dash 1.5s ease-in-out infinite;
+        stroke-width: 4px;
+        animation: m3-dash 1.4s ease-in-out infinite;
       }
       @keyframes m3-rotate {
         100% { transform: rotate(360deg); }
@@ -6520,6 +6525,7 @@ if ($action) {
           this.filteredList = [];
           this.searchDebounceTimer = null;
           this.searchSeq = 0;
+          this.navSeq = 0;
           this.isSearching = false;
           this.advFilters = { ext: '', type: '', date_from: '', date_to: '', size_min: '', size_max: '' };
           this.starredSet = new Set();
@@ -7169,16 +7175,28 @@ if ($action) {
           const isTrash = this.currentSection === 'trash';
           const isActivity = this.currentSection === 'activity';
           const isGallery = this.currentSection === 'gallery';
+          const isRecents = this.currentSection === 'recents';
           const hideUpload = isStarred || isTrash || isActivity || isGallery;
           const hideNewItems = isStarred || isTrash || isActivity || isGallery;
-          const hideManga = isTrash || isActivity;
+          const hideManga = isTrash || isActivity || isStarred || isRecents;
 
-          // Hide Manga Mode in Trash & Activity
+          // Centralized Content Header & Toolbar Visibility
+          const contentHeader = document.querySelector('.content-header');
+          if (contentHeader) {
+            contentHeader.style.display = (isTrash || isActivity) ? 'none' : 'flex';
+          }
+
+          const toolbar = document.querySelector('.toolbar-actions');
+          if (toolbar) {
+            toolbar.style.display = (isTrash || isActivity) ? 'none' : 'flex';
+          }
+
+          // Hide Manga Mode in Trash, Activity, Starred & Recents
           const btnMangaDesk = document.getElementById('btn-manga-desk');
           const dmManga = document.getElementById('dm-manga');
           if (btnMangaDesk) btnMangaDesk.style.display = hideManga ? 'none' : 'flex';
           if (dmManga) dmManga.style.display = hideManga ? 'none' : 'flex';
-
+    
           // Desktop Upload Button
           const btnUploadDesk = document.getElementById('btn-upload-desk');
           if (btnUploadDesk) btnUploadDesk.style.display = hideUpload ? 'none' : 'flex';
@@ -7422,11 +7440,10 @@ if ($action) {
         }
   
         async loadDir(path, clearSearch = true) {
+          const seq = ++this.navSeq;
           this.currentSection = 'home';
           this.updateControlsVisibility();
-          const toolbar = document.querySelector('.toolbar-actions');
-          if (toolbar) toolbar.style.display = 'flex';
-          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash').forEach(el => el.classList.remove('active'));
+          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash, #nav-gallery').forEach(el => el.classList.remove('active'));
           document.getElementById('nav-home')?.classList.add('active');
           this.currentPath = path;
           this.selectedItems.clear();
@@ -7444,39 +7461,19 @@ if ($action) {
           this.sidebarBackdrop.classList.remove('active');
           this.updateTreeActive();
 
-          const cacheKey = 'dir_list_' + path;
-          let hasValidCache = false;
-
-          if (window.opfsCache) {
-            try {
-              const cachedData = await window.opfsCache.getJSON(cacheKey);
-              if (cachedData && ((cachedData.folders && cachedData.folders.length > 0) || (cachedData.files && cachedData.files.length > 0))) {
-                this.data = cachedData;
-                this.renderGallery();
-                this.updateBreadcrumbs();
-                this.updateBadges();
-                hasValidCache = true;
-              }
-            } catch (e) {}
-          }
-
-          if (!hasValidCache) {
-            if (this.container.querySelector('.file-card')) {
-              this.container.style.opacity = '0.6';
-            } else {
-              this.container.innerHTML = `
-                <div class="center-state">
-                  <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-                  <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading files...</div>
-                </div>
-              `;
-            }
-          }
+          // Always display loading state first to prevent stale page conflicts or merging
+          this.container.style.opacity = '1';
+          this.container.innerHTML = `
+            <div class="center-state">
+              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+              <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading files...</div>
+            </div>
+          `;
 
           try {
             const res = await fetch(`?action=list&dir=${encodeURIComponent(path || '')}`);
+            if (seq !== this.navSeq) return;
             if (!res.ok) {
-              // If a requested subfolder doesn't exist, auto-fallback to root directory
               if (path && path !== '') {
                 this.toast(`Folder "${path}" not found. Redirecting to Home...`);
                 this.navigate('');
@@ -7485,22 +7482,21 @@ if ($action) {
               throw new Error('Failed to load directory');
             }
             const freshData = await res.json();
+            if (seq !== this.navSeq) return;
             this.data = freshData;
-            if (window.opfsCache) window.opfsCache.setJSON(cacheKey, freshData);
             this.renderGallery();
             this.updateBreadcrumbs();
             this.updateBadges();
             const totalItems = (freshData.folders ? freshData.folders.length : 0) + (freshData.files ? freshData.files.length : 0);
             this.updateDocTitle(this.data.path ? this.data.path.split('/').pop() : '', totalItems);
           } catch (e) {
-            if (!hasValidCache) {
-              this.container.innerHTML = `
-                <div class="center-state" style="color:var(--md-sys-color-error);">
-                  <p>${e.message}</p>
-                  <button class="btn-primary" style="margin-top:0.6rem;" onclick="app.navigate('')">Back to Home</button>
-                </div>
-              `;
-            }
+            if (seq !== this.navSeq) return;
+            this.container.innerHTML = `
+              <div class="center-state" style="color:var(--md-sys-color-error);">
+                <p>${e.message}</p>
+                <button class="btn-primary" style="margin-top:0.6rem;" onclick="app.navigate('')">Back to Home</button>
+              </div>
+            `;
           }
         }
   
@@ -8713,6 +8709,7 @@ if ($action) {
         }
 
         async loadGallery() {
+          const seq = ++this.navSeq;
           this.currentSection = 'gallery';
           this.updateControlsVisibility();
           this.currentPath = '';
@@ -8722,12 +8719,14 @@ if ($action) {
           this.isSearching = false;
           this.dirTitle.innerText = 'Gallery';
           this.dirStats.innerText = 'All photos across your drive';
-          if (this.container.querySelector('.file-card')) this.container.style.opacity = '0.6';
-          else this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
+          this.container.style.opacity = '1';
+          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg><div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading gallery...</div></div>';
 
           try {
             const res = await fetch('?action=gallery_list');
+            if (seq !== this.navSeq) return;
             const data = await res.json();
+            if (seq !== this.navSeq) return;
             this.data = {
               folders: [],
               files: data.files || [],
@@ -8739,11 +8738,13 @@ if ($action) {
             this.updateBadges();
             this.updateDocTitle('Gallery', this.data.files.length);
           } catch (e) {
+            if (seq !== this.navSeq) return;
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
         }
 
         async loadActivity() {
+          const seq = ++this.navSeq;
           this.currentSection = 'activity';
           this.updateControlsVisibility();
           this.currentPath = '';
@@ -8755,22 +8756,21 @@ if ($action) {
           this.updateBreadcrumbs();
           this.updateDocTitle('File Activity');
 
-          const toolbar = document.querySelector('.toolbar-actions');
-          if (toolbar) toolbar.style.display = 'none';
-
-          if (this.container.querySelector('.activity-row')) {
-            this.container.style.opacity = '0.6';
-          } else {
-            this.container.innerHTML = `
-              <div class="center-state">
-                <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-              </div>
-            `;
-          }
+          this.container.className = 'gallery-container';
+          this.container.removeAttribute('data-cols');
+          this.container.style.opacity = '1';
+          this.container.innerHTML = `
+            <div class="center-state">
+              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+              <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading activity...</div>
+            </div>
+          `;
 
           try {
             const res = await fetch('?action=activity_list');
+            if (seq !== this.navSeq) return;
             const data = await res.json();
+            if (seq !== this.navSeq) return;
             this.activityStats = data.stats || {};
             this.rawActivities = data.activities || [];
 
@@ -8791,6 +8791,7 @@ if ($action) {
 
             this.renderActivityView();
           } catch (e) {
+            if (seq !== this.navSeq) return;
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
         }
@@ -8876,6 +8877,7 @@ if ($action) {
         }
 
         async loadRecents() {
+          const seq = ++this.navSeq;
           this.currentSection = 'recents';
           this.updateControlsVisibility();
           this.currentPath = '';
@@ -8885,12 +8887,14 @@ if ($action) {
           this.isSearching = false;
           this.dirTitle.innerText = 'Recents';
           this.dirStats.innerText = 'Chronologically sorted from newest to oldest';
-          if (this.container.querySelector('.file-card')) this.container.style.opacity = '0.6';
-          else this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
+          this.container.style.opacity = '1';
+          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg><div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading recents...</div></div>';
 
           try {
             const res = await fetch('?action=recents_list');
+            if (seq !== this.navSeq) return;
             const data = await res.json();
+            if (seq !== this.navSeq) return;
 
             const dedupe = (list) => {
               const seen = new Set();
@@ -8916,11 +8920,13 @@ if ($action) {
             this.updateBadges();
             this.updateDocTitle('Recents', folders.length + files.length);
           } catch (e) {
+            if (seq !== this.navSeq) return;
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
         }
 
         async loadStarred() {
+          const seq = ++this.navSeq;
           this.currentSection = 'starred';
           this.updateControlsVisibility();
           this.currentPath = '';
@@ -8930,12 +8936,14 @@ if ($action) {
           this.isSearching = false;
           this.dirTitle.innerText = 'Starred Items';
           this.dirStats.innerText = 'Quick access to your favorite files and folders';
-          if (this.container.querySelector('.file-card')) this.container.style.opacity = '0.6';
-          else this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
+          this.container.style.opacity = '1';
+          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg><div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading starred items...</div></div>';
 
           try {
             const res = await fetch('?action=starred_list');
+            if (seq !== this.navSeq) return;
             const data = await res.json();
+            if (seq !== this.navSeq) return;
             this.starredSet = new Set(data.starred_paths || []);
             this.data = {
               folders: data.folders || [],
@@ -8948,6 +8956,7 @@ if ($action) {
             this.updateBadges();
             this.updateDocTitle('Starred Items');
           } catch(e) {
+            if (seq !== this.navSeq) return;
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
         }
@@ -8994,6 +9003,7 @@ if ($action) {
         }
 
         async loadTrash() {
+          const seq = ++this.navSeq;
           this.currentSection = 'trash';
           this.updateControlsVisibility();
           this.currentPath = '';
@@ -9005,25 +9015,21 @@ if ($action) {
           this.updateBreadcrumbs();
           this.updateDocTitle('Trash Bin');
 
-          const toolbar = document.querySelector('.toolbar-actions');
-          if (toolbar) toolbar.style.display = 'none';
-
-          this.container.className = 'gallery-container layout-grid';
+          this.container.className = 'gallery-container';
           this.container.removeAttribute('data-cols');
-
-          if (this.container.querySelector('.center-state')) {
-            this.container.innerHTML = `
-              <div class="center-state">
-                <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-              </div>
-            `;
-          } else {
-            this.container.style.opacity = '0.6';
-          }
+          this.container.style.opacity = '1';
+          this.container.innerHTML = `
+            <div class="center-state">
+              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+              <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading trash...</div>
+            </div>
+          `;
 
           try {
             const res = await fetch('?action=trash_list');
+            if (seq !== this.navSeq) return;
             const data = await res.json();
+            if (seq !== this.navSeq) return;
             this.rawTrash = data.trash || [];
 
             const trashFiles = this.rawTrash.filter(i => !i.is_dir).map(i => {
