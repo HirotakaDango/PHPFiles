@@ -499,6 +499,10 @@ function streamRangeFile($path, $mime) {
   if (session_status() === PHP_SESSION_ACTIVE) {
     session_write_close();
   }
+  @ini_set('zlib.output_compression', 'Off');
+  if (function_exists('apache_setenv')) {
+    @apache_setenv('no-gzip', '1');
+  }
   while (ob_get_level() > 0) {
     @ob_end_clean();
   }
@@ -549,25 +553,31 @@ function streamRangeFile($path, $mime) {
   header('Content-Type: ' . $mime);
   header('Accept-Ranges: bytes');
   header('Content-Length: ' . sprintf('%.0f', $length));
-  header('Content-Disposition: inline');
-  header('Cache-Control: public, max-age=86400');
+  header('Content-Disposition: inline; filename="' . basename($path) . '"');
+  header('Cache-Control: public, max-age=604800, immutable');
+  header('Content-Transfer-Encoding: binary');
   header('X-Content-Type-Options: nosniff');
 
   $fp = @fopen($path, 'rb');
-  if (!$fp) exit;
-  if ($start > 0) {
-    fseek($fp, (int)$start, SEEK_SET);
+  if ($fp) {
+    @flock($fp, LOCK_SH);
+    if ($start > 0) {
+      @fseek($fp, (int)$start, SEEK_SET);
+    }
+    $bytesLeft = $length;
+    $bufferSize = 512 * 1024; // 512KB for smooth 60fps streaming on low-end hardware
+    while (!feof($fp) && $bytesLeft > 0) {
+      if (connection_aborted()) break;
+      $read = (int)min($bufferSize, $bytesLeft);
+      $buff = fread($fp, $read);
+      if ($buff === false || $buff === '') break;
+      echo $buff;
+      @flush();
+      $bytesLeft -= strlen($buff);
+    }
+    @flock($fp, LOCK_UN);
+    fclose($fp);
   }
-
-  while (!feof($fp) && $length > 0 && connection_status() === CONNECTION_NORMAL) {
-    $read = (int)min(65536, $length);
-    $buff = fread($fp, $read);
-    if ($buff === false || $buff === '') break;
-    echo $buff;
-    $length -= strlen($buff);
-    @flush();
-  }
-  fclose($fp);
   exit;
 }
 
@@ -3632,9 +3642,7 @@ if ($action) {
         inset: 0;
         height: 100dvh;
         min-height: 100dvh;
-        background: rgba(8, 7, 12, 0.88);
-        backdrop-filter: blur(24px);
-        -webkit-backdrop-filter: blur(24px);
+        background: #050505;
         z-index: 1500;
         display: none;
         flex-direction: column;
@@ -3648,9 +3656,7 @@ if ($action) {
         align-items: center;
         justify-content: space-between;
         padding: 0 1.2rem;
-        background: rgba(18, 16, 22, 0.65);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        background: #141218;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         color: #fff;
         position: absolute;
@@ -3658,7 +3664,7 @@ if ($action) {
         z-index: 1550;
         opacity: 0;
         transform: translateY(-100%);
-        transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+        transition: transform 0.2s ease, opacity 0.2s ease;
       }
       .lightbox-header.active {
         opacity: 1;
@@ -6384,15 +6390,22 @@ if ($action) {
 
           if (isVideo) {
             this.body.innerHTML = `
-              <video class="lightbox-media" src="${rawUrl}" controls autoplay playsinline preload="auto" style="max-height:82dvh; max-width:95%; background:#000;">
-                Your browser does not support HTML5 video.
-              </video>
+              <div style="display:flex; flex-direction:column; align-items:center; width:100%; max-width:960px; padding:0.5rem;">
+                <div style="width:100%; display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                  <span style="font-size:0.85rem; font-weight:600; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:65%;">${fileName}</span>
+                  <a href="${rawUrl}" target="_blank" class="btn-primary" style="height:28px; padding:0 0.75rem; font-size:0.75rem; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                    <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg> External / Native Tab
+                  </a>
+                </div>
+                <video class="lightbox-media" src="${rawUrl}" controls autoplay playsinline preload="metadata" style="max-height:78dvh; max-width:100%; width:100%; background:#000; border-radius:8px; box-shadow:none;">
+                  Your browser does not support HTML5 video.
+                </video>
+              </div>
               ${navPrev}
               ${navNext}
             `;
             const vid = this.body.querySelector('video');
             if (vid) {
-              vid.load();
               vid.play().catch(() => { vid.controls = true; });
             }
           } else if (isAudio) {

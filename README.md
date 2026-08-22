@@ -1,92 +1,111 @@
 # PHPFiles - Modern Single-File PHP File Manager & Media Gallery
 
-<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/707eb5af-726b-4866-854e-eea840942310" />
+<img width="1366" height="768" alt="PHPFiles Interface" src="https://github.com/user-attachments/assets/707eb5af-726b-4866-854e-eea840942310" />
 
-**PHPFiles** is a powerful, lightweight, single-file PHP file manager and gallery application designed for fast, seamless file management and media browsing. It features a modern Google Material Design 3 UI, rich media viewers, chunked file uploading, client-side caching (OPFS), and zero external database dependencies.
+**PHPFiles** is a high-performance, single-file PHP file manager, document workspace, and media gallery. Built on Google Material Design 3 principles, it combines desktop-class file management with rich media streaming, client-side OPFS caching, and zero external database dependencies.
 
 ---
 
-## Key Features
+## ✨ Key Features
 
-- **Single-File Architecture:** Fully functional single-file script incorporating both backend PHP endpoints and front-end HTML/CSS/JS interface.
-- **Material Design 3 Interface:** Responsive layout supporting light/dark themes, customizable grid columns, masonry/column views, and list views.
+- **Single-File Architecture:** The entire application—backend REST endpoints, frontend SPA routing, and UI—is encapsulated in a single `.php` file.
+- **Material Design 3 Interface:** Adaptive layout featuring Light and Dark modes, customizable grid density (1 to 8 columns), fluid masonry layout, and compact list view.
+- **Low-Spec Hardware & Media Streaming Optimizations:**
+  - **Zero Memory Accumulation:** Bypasses PHP `zlib.output_compression` and Apache `gzip` on streaming endpoints, preventing low-RAM devices (e.g., 2GB laptops) from crashing due to memory buffering.
+  - **High-Throughput 512KB Chunking:** Optimized byte-range streaming (`HTTP 206 Partial Content`) with shared non-blocking file locks (`flock`) and connection abort listeners.
+  - **GPU-Friendly Compositing:** Streamlined CSS rendering without heavy blur filters for smooth 60fps playback on legacy integrated graphics (e.g., Intel HD 3000/4000).
+  - **External / Native Player Link:** Instant "Native Tab / External Player" toggle to watch videos without DOM overhead.
+- **Advanced Batch Rename Engine:**
+  - Rename dozens of files simultaneously using substring patterns or Regular Expressions (Regex).
+  - Match case toggles, prefix/suffix additions, and target scoping (*Name only, Extension only, or Full filename*).
+  - Live preview table with duplicate destination collision detection.
+- **HDMarkDown & Programming Workspace:**
+  - Built-in text and code editor powered by CodeMirror.
+  - Live split-view or full preview mode for Markdown and HTML files with syntax highlighting (PHP, JS, Python, SQL, C/C++, HTML, CSS, XML).
+  - Interactive **Mermaid Diagrams** with zoom and drag-pan navigation.
+  - Fullscreen Presentation Mode for slideshows (`---` delimiter slide separation).
+  - In-editor Find & Replace (with match counters), Undo/Redo stack, and word wrap toggle.
+- **File Version Control & LCS Diff Viewer:**
+  - Automatic incremental version backup snapshots created before every file save or restore.
+  - Bounded Longest Common Subsequence (LCS) line diff algorithm with fast prefix/suffix trimming for large files.
+  - Visual side-by-side/inline comparison of additions (`+`) and deletions (`-`) with one-click rollback.
+- **Document & Office Suite Rendering:**
+  - Client-side PDF rendering using `pdf.js` with Retina / High-DPI canvas scaling.
+  - Microsoft Word (`.docx`) document rendering via `docx-preview`.
+  - Excel (`.xlsx`, `.xls`, `.csv`) spreadsheet parsing and interactive table generation via `SheetJS`.
+- **Archive Operations & Live Inspector:**
+  - Create ZIP or TAR/TAR.GZ archives from multiple selected files or folders.
+  - Server-side extraction for ZIP, TAR, GZ, and RAR archives.
+  - **Archive Inspector:** Preview archive contents, file sizes, and modification dates without extracting to disk.
+- **Manga Reader Mode & Offline HTML Exporter:**
+  - Continuous vertical reading mode for comic/manga image folders with customizable width options (*Fit Width, Fit Height, Fit Screen*).
+  - **Offline Exporter:** One-click export that packages an entire image folder into a single standalone `.html` file with embedded base64 images.
+- **Chunked Uploads & Remote URL Downloader:**
+  - Resumable 2MB chunked upload engine supporting drag-and-drop of entire folder hierarchies.
+  - **Remote URL Downloader:** Fetch files directly to the server from remote HTTP/HTTPS links with automated filename detection via Content-Disposition headers.
 - **Drive Navigation & Sections:**
   - **Home & Folder Tree:** Interactive sidebar folder navigation tree with expand/collapse state memory.
-  - **Recents:** Instant chronological view of recently updated or uploaded files and folders.
+  - **Recents:** Chronological view of recently updated or uploaded files and folders.
   - **Starred Items:** Bookmark favorite files and directories for quick access.
-  - **File Activity Log:** In-depth audit log tracking created, modified, renamed, uploaded, and trashed file activities.
-  - **Trash Bin & Auto-Purge:** Soft-delete system with manual restore/empty controls and automatic purging of items older than 30 days.
-- **Chunked & Remote Uploads:**
-  - Resumable/chunked uploading of large files and entire folder structures via drag-and-drop or file pickers.
-  - **Remote URL Downloader:** Direct server-side file downloading from remote URLs with optional custom naming and header auto-detection.
-- **Rich Media Lightbox & Gallery:** Modal lightbox with touch gestures for viewing photos, video streaming (supports range requests for seekable playback), and audio playback with spinning album art discs.
-- **Dedicated Manga Reader Mode:** Continuous vertical scroll viewer for reading comic/manga image folders with customizable widths and an offline HTML exporter option.
-- **Document & PDF Viewers:** In-browser rendering for PDF files, Microsoft Word (`.docx`) documents, and Excel (`.xlsx`/`.csv`) spreadsheets.
-- **HDMarkDown & Code Editor:**
-  - Full-featured syntax-friendly text editor powered by CodeMirror.
-  - Live split-view or full preview mode for Markdown files with support for code syntax highlighting, Mermaid diagrams, and presentation mode.
-  - In-editor Find & Replace, undo/redo history, word wrap, and metrics counter.
-- **Version Control & Diff Viewer:** Automatic file versioning on edit with rollback capabilities and inline visual diff comparison (`Current` vs. `Rollback` version).
-- **File Encryption:** AES-256-CBC client/server file encryption (`.enc`) and decryption protected by configurable or custom passwords.
-- **Metadata Viewer (EXIF, IPTC & ID3):** Extract detailed image metadata (EXIF/IPTC with Google Maps coordinates) and audio/video ID3 tags (track titles, artists, duration, resolution, and album art).
-- **Archive Operations & Inspector:**
-  - Create ZIP or TAR/TAR.GZ archives from selected items.
-  - Extract ZIP, TAR, and RAR archives directly on the server.
-  - **Archive Inspector:** Interactive modal preview to view inner entries, compressed/uncompressed sizes, and modification dates without extracting.
-- **Clipboard & Batch Operations:** Select multiple items for batch inspection, ZIP downloading, server compression, moving (cut), copying, or deletion.
-- **Public Share Links:** Generate direct download or sharing links protected by tokenized URLs.
-- **OPFS (Origin Private File System) Caching:** High-performance client-side directory and tree caching to deliver instantaneous navigation.
-- **Authentication & Security:** Optional password authentication (with `password_verify` support), demo/read-only mode for unauthenticated users, and path normalization to prevent directory traversal attacks (`safePath`).
+  - **File Activity Log:** Audit log tracking created, modified, renamed, uploaded, and trashed file activities with daily/weekly analytics.
+  - **Trash Bin & Auto-Purge:** Soft-delete recycling bin with individual item restoration, empty bin option, and automatic 30-day purge cleanup.
+- **Security & Privacy:**
+  - **AES-256-CBC File Encryption:** Encrypt and decrypt sensitive files (`.enc`) on-the-fly with custom passwords.
+  - **Metadata Inspector:** Extract EXIF/IPTC image metadata (with Google Maps coordinate links) and audio/video ID3 tags (duration, bitrate, resolution, album art).
+  - **OPFS (Origin Private File System) Caching:** Client-side directory tree and metadata caching for instant folder navigation.
+  - **Access Control:** Optional password protection with bcrypt hashing and read-only Demo Mode for unauthenticated visitors.
 
 ---
 
-## File Type Support
+## 📁 File Type Support
 
 | Category | Supported Extensions |
 | :--- | :--- |
 | **Images** | `jpg`, `jpeg`, `png`, `gif`, `webp`, `avif`, `bmp`, `svg` |
 | **Videos** | `mp4`, `webm`, `mov`, `m4v`, `ogv`, `mkv`, `avi`, `ts`, `3gp`, `wmv`, `flv` |
 | **Audio** | `mp3`, `wav`, `ogg`, `flac`, `m4a`, `aac`, `opus`, `wma`, `m4r`, `mid`, `midi` |
-| **Documents / Text** | `txt`, `md`, `markdown`, `json`, `js`, `css`, `html`, `htm`, `php`, `py`, `c`, `cpp`, `sh`, `log`, `xml`, `yaml`, `yml`, `ini`, `env`, `sql`, `csv`, `pdf`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `enc` |
+| **Documents / Code** | `txt`, `md`, `markdown`, `json`, `js`, `css`, `html`, `htm`, `php`, `py`, `c`, `cpp`, `sh`, `log`, `xml`, `yaml`, `yml`, `ini`, `env`, `sql`, `csv`, `pdf`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `enc` |
 | **Archives** | `zip`, `tar`, `gz`, `tgz`, `7z`, `rar` |
 
 ---
 
-## Requirements
+## 📋 Requirements
 
 - **PHP Version:** PHP 7.4 or higher (PHP 8.x recommended).
 - **PHP Extensions:**
   - `gd` (Required for image thumbnail generation and WebP/AVIF support).
-  - `exif` (Optional, for extracting image EXIF metadata).
-  - `zip` (Optional, required for ZIP archive compression and extraction).
-  - `curl` (Optional, required for Remote URL downloads).
-  - `openssl` (Optional, required for AES-256 file encryption and decryption).
-  - `phar` / `rar` (Optional, for TAR/TAR.GZ creation and RAR extraction).
-- **Web Server:** Apache, Nginx, IIS, or PHP Built-in Web Server.
+  - `fileinfo` (Standard, for MIME type detection).
+  - `exif` *(Optional — for extracting camera EXIF metadata)*.
+  - `zip` *(Optional — for ZIP archive creation, inspection, and extraction)*.
+  - `curl` *(Optional — for Remote URL downloads)*.
+  - `openssl` *(Optional — for AES-256 file encryption and decryption)*.
+  - `phar` / `rar` *(Optional — for TAR creation and RAR extraction)*.
+- **Web Server:** Apache, Nginx, IIS, or PHP Built-in CLI Server.
+- Read and write permissions in the directory where the script resides.
 
 ---
 
-## Quick Start & Installation
+## 🚀 Installation & Quick Start
 
-1. **Download:** Save the single PHP script as `index.php` (or `files.php`) inside your target directory.
-2. **Permissions:** Ensure the PHP script has read and write permissions in its parent directory (for uploading files, caching thumbnails in `.gallery_cache`, and executing modifications).
-3. **Run:** Point your web browser to the file location (e.g., `http://localhost/index.php`).
+1. **Upload:** Place `phpfiles.php` (or rename it to `index.php`) in any web-accessible folder on your server.
+2. **Permissions:** Ensure the parent folder has write permissions so PHPFiles can create cache directories (`.gallery_cache/`, `.drive_trash_bin/`, `.file_version/`).
+3. **Open:** Navigate to the URL in your web browser (e.g., `http://your-server.com/phpfiles.php`).
 
-### PHP Built-in Web Server
+### Local Development / Testing
 
-To test locally without setting up Apache or Nginx:
+To run locally without setting up Apache or Nginx:
 
 ```bash
-php -S localhost:8000 index.php
+php -S localhost:8000 phpfiles.php
 ```
 
 Then open `http://localhost:8000` in your web browser.
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
-All application configuration options are located at the top of the PHP script in the `$config` array:
+All configuration settings are defined in the `$config` array at the top of the file:
 
 ```php
 $config = [
@@ -96,9 +115,9 @@ $config = [
   'version_dir'        => __DIR__ . '/.file_version',
   'meta_file'          => __DIR__ . '/.gallery_cache/.drive_meta.json',
   'app_title'          => 'PHPFiles',
-  'auth_enabled'       => false, // Set to true to enable login
+  'auth_enabled'       => false, // Set to true to require login
   'password'           => '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', // Default password: admin
-  'encryption_key'     => 'Default_Secret_2026', // Secret key used for AES-256 file encryption
+  'encryption_key'     => 'Default_Secret_2026', // Secret key for AES-256 encryption
   'thumb_size'         => 480,
   'thumb_quality'      => 85,
   'memory_limit'       => '512M',
@@ -109,46 +128,39 @@ $config = [
   'allow_edit'         => true,
   'allow_zip'          => true,
   'allow_download'     => true,
-  // Extension definitions...
+  // Extension arrays...
 ];
 ```
 
 ### Password Protection & Demo Mode
 
-To enable password authentication:
-
 1. Set `'auth_enabled' => true`.
-2. Generate a secure password hash in PHP using `password_hash('your_password', PASSWORD_BCRYPT)` and assign it to `'password'`.
-3. When authenticated, full read/write capabilities are unlocked. Unauthenticated users operate in a read-only **Demo Mode**.
+2. Generate a bcrypt hash using `password_hash('your_password', PASSWORD_BCRYPT)` and assign it to `'password'`.
+3. When authenticated, full read/write permissions are unlocked. Unauthenticated users access the workspace in a read-only **Demo Mode**.
 
 ---
 
-## Usage Guide & Shortcuts
+## ⌨️ Keyboard Shortcuts
 
-- **Navigation:** Click on directories in the main gallery, sidebar folder tree, breadcrumbs, or use drive navigation filters (Recents, Starred, Activity, Trash).
-- **Selection & Batch Operations:** Click the checkbox on any file/folder card to select multiple items for batch info viewing, ZIP downloading, compression, copying/cutting, or deletion.
-- **Remote Upload:** Click **Upload > Upload from URL** to fetch files directly from remote HTTP/HTTPS links.
-- **Manga Mode:** Right-click a folder or click the Manga icon in the top toolbar to load all folder images into a continuous vertical reader.
-- **Offline Manga Export:** Inside Manga Mode, click the download icon to save the entire image folder as a standalone self-contained `.html` file with embedded base64 images.
-- **Text & Markdown Editing:** Right-click or click on supported text/code/markdown files to open the built-in CodeMirror editor with live preview, diff viewer, and version history.
-- **Keyboard Shortcuts:**
+| Shortcut | Action | Scope |
+| :--- | :--- | :--- |
+| `?` / `F1` | Open Keyboard Shortcuts Cheat Sheet | Global |
+| `/` or `Ctrl + F` | Focus Search Bar | File Manager |
+| `Ctrl + F` | Find & Replace Card | Editor |
+| `Ctrl + A` | Select all items | File Manager |
+| `Ctrl + Shift + N` | Create a new folder | File Manager |
+| `Ctrl + Shift + F` | Create a new text file | File Manager |
+| `Ctrl + C` / `Ctrl + X` | Copy / Cut selected items | File Manager |
+| `Ctrl + V` | Paste copied/cut items | File Manager |
+| `F2` | Rename selected item | File Manager |
+| `Delete` | Move selected item(s) to Trash | File Manager |
+| `Ctrl + S` | Save active document | Editor |
+| `Ctrl + B` / `Ctrl + I` | Bold / Italic syntax | Editor |
+| `Ctrl + Z` / `Ctrl + Y` | Undo / Redo changes | Editor |
+| `←` / `→` | Previous / Next media item | Lightbox |
+| `Space` | Play / Pause media playback | Lightbox |
+| `Esc` | Close active modal, Lightbox, or Manga viewer | Global |
 
-| Shortcut | Action |
-| --- | --- |
-| `?` / `F1` | Open Keyboard Shortcuts guide modal |
-| `/` or `Ctrl + F` | Focus search bar (File Manager) / Find & Replace (Editor) |
-| `Ctrl + A` | Select all items in current folder |
-| `Ctrl + Shift + N` | Create a new folder |
-| `Ctrl + Shift + F` | Create a new text file |
-| `Ctrl + C` / `Ctrl + X` | Copy / Cut selected items |
-| `Ctrl + V` | Paste copied/cut items to current directory |
-| `F2` | Rename selected item |
-| `Delete` | Move selected item(s) to Trash |
-| `Ctrl + S` | Save active document in Editor |
-| `Esc` | Close active modal, Lightbox, or Manga view |
+## 📄 License
 
----
-
-## License
-
-This project is open-source software provided under the MIT License.
+This project is open-source software provided under the [MIT License](LICENSE).
