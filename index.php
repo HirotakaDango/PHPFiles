@@ -685,7 +685,7 @@ if ($action === 'logout') {
 
 if ($action) {
   $writeActions = [
-    'upload_chunk', 'create', 'rename', 'delete', 'save_text',
+    'upload_chunk', 'create', 'rename', 'batch_rename', 'delete', 'save_text',
     'trash', 'trash_restore', 'trash_delete', 'trash_empty', 'version_restore',
     'star_toggle', 'clipboard_paste', 'fetch_url', 'encrypt_file',
     'decrypt_file', 'zip', 'unzip'
@@ -761,23 +761,34 @@ if ($action) {
   if ($action === 'search') {
     $dir = $_GET['dir'] ?? '';
     $query = trim($_GET['q'] ?? '');
+    $extFilter = strtolower(trim($_GET['ext'] ?? ''));
+    $typeFilter = strtolower(trim($_GET['type'] ?? ''));
+    $dateFrom = !empty($_GET['date_from']) ? strtotime($_GET['date_from'] . ' 00:00:00') : 0;
+    $dateTo = !empty($_GET['date_to']) ? strtotime($_GET['date_to'] . ' 23:59:59') : 0;
+    $sizeMin = (isset($_GET['size_min']) && $_GET['size_min'] !== '') ? floatval($_GET['size_min']) : -1;
+    $sizeMax = (isset($_GET['size_max']) && $_GET['size_max'] !== '') ? floatval($_GET['size_max']) : -1;
+
     $fullPath = safePath($config['root_dir'], $dir);
-    if (!$fullPath || !is_dir($fullPath) || $query === '') {
+    $hasAdv = ($extFilter !== '' || $typeFilter !== '' || $dateFrom > 0 || $dateTo > 0 || $sizeMin >= 0 || $sizeMax >= 0);
+
+    if (!$fullPath || !is_dir($fullPath) || ($query === '' && !$hasAdv)) {
       jsonResponse(['folders' => [], 'files' => [], 'query' => $query, 'count' => 0]);
     }
 
-    $maxResults = 200;
+    $maxResults = 300;
     $foundFolders = [];
     $foundFiles = [];
     $rootLen = strlen(realpath($config['root_dir']));
     $cacheReal = realpath($config['cache_dir']);
+    $trashReal = realpath($config['trash_dir']);
+    $allowedExts = array_filter(array_map('trim', explode(',', str_replace('.', '', $extFilter))));
 
     $flags = FilesystemIterator::SKIP_DOTS | FilesystemIterator::FOLLOW_SYMLINKS;
     $dirIterator = new RecursiveDirectoryIterator($fullPath, $flags);
-    $filterIterator = new RecursiveCallbackFilterIterator($dirIterator, function ($current) use ($cacheReal) {
+    $filterIterator = new RecursiveCallbackFilterIterator($dirIterator, function ($current) use ($cacheReal, $trashReal) {
       $path = $current->getPathname();
       $filename = $current->getFilename();
-      if ($filename[0] === '.' || ($cacheReal && strpos($path, $cacheReal) === 0)) {
+      if ($filename[0] === '.' || ($cacheReal && strpos($path, $cacheReal) === 0) || ($trashReal && strpos($path, $trashReal) === 0)) {
         return false;
       }
       return true;
@@ -790,34 +801,50 @@ if ($action) {
     foreach ($iterator as $item) {
       if ($count >= $maxResults) break;
       $name = $item->getFilename();
-      if (stripos($name, $query) !== false) {
-        $itemPath = $item->getPathname();
-        $rel = ltrim(str_replace(['\\', '//'], '/', substr($itemPath, $rootLen)), '/');
-        $mtime = $item->getMTime();
+      $isMatch = ($query === '' || stripos($name, $query) !== false);
+      if (!$isMatch) continue;
 
-        if ($item->isDir()) {
-          $foundFolders[] = [
-            'name'        => $name,
-            'path'        => $rel,
-            'mtime'       => $mtime,
-            'items_count' => 0
-          ];
-        } else {
-          $size = $item->getSize();
-          $ext = strtolower($item->getExtension());
-          $type = getFileType($ext, $config);
-          $foundFiles[] = [
-            'name'     => $name,
-            'path'     => $rel,
-            'size'     => $size,
-            'size_fmt' => formatBytes($size),
-            'mtime'    => $mtime,
-            'ext'      => $ext,
-            'type'     => $type,
-            'width'    => 0,
-            'height'   => 0
-          ];
+      $itemPath = $item->getPathname();
+      $rel = ltrim(str_replace(['\\', '//'], '/', substr($itemPath, $rootLen)), '/');
+      $mtime = $item->getMTime();
+
+      if ($item->isDir()) {
+        if (!empty($allowedExts) || $typeFilter !== '' || $sizeMin >= 0 || $sizeMax >= 0) {
+          continue;
         }
+        if ($dateFrom > 0 && $mtime < $dateFrom) continue;
+        if ($dateTo > 0 && $mtime > $dateTo) continue;
+
+        $foundFolders[] = [
+          'name'        => $name,
+          'path'        => $rel,
+          'mtime'       => $mtime,
+          'items_count' => 0
+        ];
+        $count++;
+      } else {
+        $size = (float)$item->getSize();
+        $ext = strtolower($item->getExtension());
+        $type = getFileType($ext, $config);
+
+        if (!empty($allowedExts) && !in_array($ext, $allowedExts)) continue;
+        if ($typeFilter !== '' && $typeFilter !== 'all' && $type !== $typeFilter) continue;
+        if ($dateFrom > 0 && $mtime < $dateFrom) continue;
+        if ($dateTo > 0 && $mtime > $dateTo) continue;
+        if ($sizeMin >= 0 && $size < $sizeMin) continue;
+        if ($sizeMax >= 0 && $size > $sizeMax) continue;
+
+        $foundFiles[] = [
+          'name'     => $name,
+          'path'     => $rel,
+          'size'     => $size,
+          'size_fmt' => formatBytes($size),
+          'mtime'    => $mtime,
+          'ext'      => $ext,
+          'type'     => $type,
+          'width'    => 0,
+          'height'   => 0
+        ];
         $count++;
       }
     }
@@ -1204,7 +1231,7 @@ if ($action) {
     $newName = trim($_POST['new_name'] ?? '');
     if (!$item || !file_exists($item) || !$newName) jsonResponse(['error' => 'Invalid parameters'], 400);
 
-    $newName = preg_replace('/[^\w\s\d\.\-_~()[\]]/', '', $newName);
+    $newName = preg_replace('/[^\w\s\d\.\-_~()[\]]/u', '', $newName);
     $dest = dirname($item) . DIRECTORY_SEPARATOR . $newName;
     if (file_exists($dest)) jsonResponse(['error' => 'Destination already exists'], 400);
 
@@ -1213,6 +1240,51 @@ if ($action) {
       logDriveActivity($config['meta_file'], 'renamed', $newName, 'Renamed from ' . basename($item));
     }
     jsonResponse(['success' => $renamed]);
+  }
+
+  if ($action === 'batch_rename') {
+    if (!$config['allow_rename']) jsonResponse(['error' => 'Rename disabled'], 403);
+    $renames = json_decode($_POST['renames'] ?? '[]', true);
+    if (!is_array($renames) || empty($renames)) jsonResponse(['error' => 'No rename items provided'], 400);
+
+    $successCount = 0;
+    $errors = [];
+
+    foreach ($renames as $task) {
+      $oldPath = $task['path'] ?? '';
+      $newName = trim($task['new_name'] ?? '');
+      if (!$oldPath || !$newName) continue;
+
+      $fullSrc = safePath($config['root_dir'], $oldPath);
+      if (!$fullSrc || !file_exists($fullSrc)) {
+        $errors[] = "Source not found: " . basename($oldPath);
+        continue;
+      }
+
+      $cleanName = preg_replace('/[^\w\s\d\.\-_~()[\]]/u', '', $newName);
+      if (empty($cleanName) || $cleanName === basename($fullSrc)) continue;
+
+      $destDir = dirname($fullSrc);
+      $targetPath = $destDir . DIRECTORY_SEPARATOR . $cleanName;
+
+      if (file_exists($targetPath)) {
+        $errors[] = "File already exists: {$cleanName}";
+        continue;
+      }
+
+      if (@rename($fullSrc, $targetPath)) {
+        $successCount++;
+        logDriveActivity($config['meta_file'], 'renamed', $cleanName, 'Renamed from ' . basename($fullSrc));
+      } else {
+        $errors[] = "Could not rename: " . basename($fullSrc);
+      }
+    }
+
+    jsonResponse([
+      'success' => true,
+      'renamed_count' => $successCount,
+      'errors' => $errors
+    ]);
   }
 
   if ($action === 'delete') {
@@ -2512,8 +2584,162 @@ if ($action) {
         outline: none;
         font-size: 0.88rem;
         color: var(--md-sys-color-on-surface);
+        background: transparent;
       }
       .search-box svg { color: var(--md-sys-color-on-surface-variant); width: 19px; height: 19px; }
+      .search-adv-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        color: var(--md-sys-color-on-surface-variant);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: all 0.15s ease;
+        position: relative;
+      }
+      .search-adv-btn:hover, .search-adv-btn.active {
+        color: var(--md-sys-color-primary);
+        background: var(--md-sys-color-surface-container-highest);
+      }
+      .search-adv-btn.active::after {
+        content: '';
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 6px;
+        height: 6px;
+        background: var(--md-sys-color-primary);
+        border-radius: 50%;
+      }
+      .trash-view-wrapper {
+        grid-column: 1 / -1;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        margin-top: 0;
+      }
+
+      /* Batch Rename Modal UI Styles */
+      .br-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem;
+      }
+      @media (max-width: 540px) {
+        .br-grid {
+          grid-template-columns: 1fr;
+          gap: 0.5rem;
+        }
+      }
+
+      .br-options-container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        background: var(--md-sys-color-surface-container-low);
+        border: 1px solid var(--md-sys-color-outline-variant);
+        border-radius: 14px;
+        padding: 0.45rem 0.65rem;
+      }
+      .br-segmented-control {
+        display: flex;
+        background: var(--md-sys-color-surface-container-highest);
+        border-radius: 10px;
+        padding: 2px;
+        gap: 2px;
+      }
+      .br-chip-label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+      }
+      .br-chip-label input {
+        display: none;
+      }
+      .br-chip-label span {
+        padding: 0.3rem 0.65rem;
+        font-size: 0.76rem;
+        font-weight: 500;
+        color: var(--md-sys-color-on-surface-variant);
+        border-radius: 8px;
+        transition: all 0.15s ease;
+      }
+      .br-chip-label input:checked + span {
+        background: var(--md-sys-color-primary);
+        color: var(--md-sys-color-on-primary);
+        font-weight: 600;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      }
+      .br-checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .br-check-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: var(--md-sys-color-on-surface);
+        cursor: pointer;
+        user-select: none;
+      }
+      .br-check-pill input[type="checkbox"] {
+        accent-color: var(--md-sys-color-primary);
+        width: 15px;
+        height: 15px;
+        cursor: pointer;
+      }
+
+      .br-preview-box {
+        max-height: 190px;
+        min-height: 75px;
+        overflow-y: auto;
+        border: 1px solid var(--md-sys-color-outline-variant);
+        border-radius: 12px;
+        background: var(--md-sys-color-surface-container-lowest);
+      }
+      .batch-rename-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+      }
+      .batch-rename-table th, .batch-rename-table td {
+        padding: 0.45rem 0.75rem;
+        border-bottom: 1px solid var(--md-sys-color-surface-container-high);
+        text-align: left;
+      }
+      .batch-rename-table th {
+        background: var(--md-sys-color-surface-container-high);
+        color: var(--md-sys-color-primary);
+        font-weight: 600;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        padding-top: 0.4rem;
+        padding-bottom: 0.4rem;
+      }
+      .batch-rename-table tr:last-child td {
+        border-bottom: none;
+      }
+      .br-preview-new {
+        font-weight: 600;
+        color: var(--md-sys-color-on-surface);
+      }
+      .br-preview-new.modified {
+        color: #7ee787;
+      }
+      .br-preview-new.collision {
+        color: #ff7b72;
+      }
   
       .btn-icon {
         width: 40px;
@@ -4279,6 +4505,8 @@ if ($action) {
   
       .form-group { margin-bottom: 1rem; }
       .form-label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--md-sys-color-primary); margin-bottom: 0.4rem; }
+      .form-group { margin-bottom: 1rem; }
+      .form-label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--md-sys-color-primary); margin-bottom: 0.4rem; }
       .form-input {
         width: 100%;
         background: var(--md-sys-color-surface-container-high);
@@ -4288,8 +4516,37 @@ if ($action) {
         color: var(--md-sys-color-on-surface);
         outline: none;
         font-size: 0.9rem;
+        box-sizing: border-box;
       }
       .form-input:focus { border-color: var(--md-sys-color-primary); }
+      select.form-input,
+      input[type="date"].form-input {
+        position: relative;
+        appearance: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        padding-right: 2.5rem;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='%23cac4d0'%3E%3Cpath d='M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 14px center;
+        background-size: 18px 18px;
+        cursor: pointer;
+      }
+      input[type="date"].form-input::-webkit-calendar-picker-indicator {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+      }
+      input[type="date"].form-input::-webkit-inner-spin-button {
+        display: none;
+        -webkit-appearance: none;
+      }
       .editor-textarea {
         width: 100%;
         height: 100%;
@@ -4801,6 +5058,9 @@ if ($action) {
         <div class="search-box">
           <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
           <input type="text" id="search-input" placeholder="Search files & subfolders...">
+          <button class="search-adv-btn" id="btn-adv-search" title="Advanced Search & Filters">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>
+          </button>
         </div>
       </div>
   
@@ -4979,14 +5239,37 @@ if ($action) {
         <span>Name (Z to A)</span>
         <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
       </div>
+      <div class="dm-sep"></div>
       <div class="dm-item" data-sort="date_desc">
         <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
         <span>Date (Newest first)</span>
         <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
       </div>
       <div class="dm-item" data-sort="date_asc">
-        <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
         <span>Date (Oldest first)</span>
+        <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+      </div>
+      <div class="dm-sep"></div>
+      <div class="dm-item" data-sort="size_desc">
+        <svg viewBox="0 0 24 24"><path d="M2 17h20v2H2v-2zm0-4h14v2H2v-2zm0-4h8v2H2V9zm0-4h4v2H2V5z"/></svg>
+        <span>Size (Largest first)</span>
+        <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+      </div>
+      <div class="dm-item" data-sort="size_asc">
+        <svg viewBox="0 0 24 24"><path d="M2 5h4v2H2V5zm0 4h8v2H2V9zm0 4h14v2H2v-2zm0 4h20v2H2v-2z"/></svg>
+        <span>Size (Smallest first)</span>
+        <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+      </div>
+      <div class="dm-sep"></div>
+      <div class="dm-item" data-sort="ext_asc">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        <span>Extension (A to Z)</span>
+        <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+      </div>
+      <div class="dm-item" data-sort="ext_desc">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm-3 7V3.5L18.5 9H13zm5 9H8v-2h8v2zm0-4H8v-2h8v2z"/></svg>
+        <span>Extension (Z to A)</span>
         <svg class="sort-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
       </div>
     </div>
@@ -4994,22 +5277,44 @@ if ($action) {
     <div class="batch-bar" id="batch-bar">
       <span class="batch-count" id="batch-count">0 selected</span>
       <div style="width:1px; height:20px; background:var(--md-sys-color-outline-variant); margin:0 0.15rem;"></div>
-      <button class="btn-icon" id="btn-batch-info" title="Information">
-        <svg viewBox="0 0 24 24"><path d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg>
-      </button>
       <button class="btn-icon" id="btn-batch-download" title="Download ZIP">
         <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
       </button>
-      <button class="btn-icon" id="btn-batch-compress" title="Compress to ZIP (Server)">
-        <svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>
-      </button>
-      <button class="btn-icon" id="btn-batch-delete" title="Delete Items">
+      <button class="btn-icon" id="btn-batch-delete" title="Move to Trash / Delete">
         <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
+      <button class="btn-icon" id="btn-batch-more" title="More Actions">
+        <svg viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
       </button>
       <div style="width:1px; height:20px; background:var(--md-sys-color-outline-variant); margin:0 0.15rem;"></div>
       <button class="btn-icon" id="btn-batch-clear" title="Clear selection">
         <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
       </button>
+    </div>
+
+    <!-- Dropdown Batch More Menu -->
+    <div class="dropdown-menu" id="dropdown-batch-more">
+      <div class="dm-item" id="dbm-rename">
+        <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        <span>Batch Rename</span>
+      </div>
+      <div class="dm-item" id="dbm-compress">
+        <svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>
+        <span>Compress to ZIP</span>
+      </div>
+      <div class="dm-item" id="dbm-info">
+        <svg viewBox="0 0 24 24"><path d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg>
+        <span>Item Information</span>
+      </div>
+      <div class="dm-sep"></div>
+      <div class="dm-item" id="dbm-copy">
+        <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+        <span>Copy Selected</span>
+      </div>
+      <div class="dm-item" id="dbm-cut">
+        <svg viewBox="0 0 24 24"><path d="M9.64 7.64c.23-.5.36-1.05.36-1.64 0-2.21-1.79-4-4-4S2 3.79 2 6s1.79 4 4 4c.59 0 1.14-.13 1.64-.36L10 12l-2.36 2.36C7.14 14.13 6.59 14 6 14c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4c0-.59-.13-1.14-.36-1.64L12 14l7 7h3v-1L9.64 7.64zM6 8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm0 12c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm6-7.5c-.28 0-.5-.22-.5-.5s.22-.5.5-.5.5.22.5.5-.22.5-.5.5zM19 3l-6 6 2 2 7-7V3h-3z"/></svg>
+        <span>Cut (Move) Selected</span>
+      </div>
     </div>
   
     <div class="upload-dock" id="upload-dock">
@@ -5088,6 +5393,125 @@ if ($action) {
             <button type="submit" class="btn-primary" id="admin-login-submit">Login</button>
           </div>
         </form>
+      </div>
+
+      <!-- Advanced Batch Rename Modal -->
+      <div class="modal-box" id="modal-batch-rename" style="display:none; max-width:600px; max-height:90dvh;">
+        <div class="modal-header">
+          <div style="display:flex; align-items:center; gap:0.5rem; overflow:hidden;">
+            <svg viewBox="0 0 24 24" style="width:20px;height:20px;color:var(--md-sys-color-primary);"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            <span id="br-title" style="font-weight:700; font-size:1rem;">Batch Rename Items</span>
+          </div>
+          <button class="btn-icon modal-close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+        </div>
+        <div class="modal-content" style="padding:1rem 1.25rem; display:flex; flex-direction:column; gap:0.65rem;">
+          <div class="br-grid">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Find Pattern</label>
+              <input type="text" class="form-input" id="br-find" placeholder="e.g. IMG_ or _copy">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Replace With</label>
+              <input type="text" class="form-input" id="br-replace" placeholder="Leave empty to remove">
+            </div>
+          </div>
+          <div class="br-grid">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Add Prefix</label>
+              <input type="text" class="form-input" id="br-prefix" placeholder="e.g. 2026_">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Add Suffix</label>
+              <input type="text" class="form-input" id="br-suffix" placeholder="e.g. _final">
+            </div>
+          </div>
+          <div class="br-options-container">
+            <div class="br-segmented-control">
+              <label class="br-chip-label"><input type="radio" name="br-target" value="name" checked><span>Name</span></label>
+              <label class="br-chip-label"><input type="radio" name="br-target" value="full"><span>Full</span></label>
+              <label class="br-chip-label"><input type="radio" name="br-target" value="ext"><span>Ext</span></label>
+            </div>
+            <div class="br-checkbox-group">
+              <label class="br-check-pill"><input type="checkbox" id="br-case"><span>Match Case</span></label>
+              <label class="br-check-pill"><input type="checkbox" id="br-regex"><span>Regex</span></label>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.2rem; font-size:0.78rem; color:var(--md-sys-color-on-surface-variant);">
+            <span id="br-status-summary">0 item(s) will be modified</span>
+            <span style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Live Preview</span>
+          </div>
+          <div class="br-preview-box">
+            <table class="batch-rename-table">
+              <thead>
+                <tr>
+                  <th>Original Name</th>
+                  <th style="width:24px; text-align:center;">➔</th>
+                  <th>New Name</th>
+                </tr>
+              </thead>
+              <tbody id="br-preview-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+          <button class="btn-primary modal-close" style="background:transparent; color:var(--md-sys-color-on-surface); border:1px solid var(--md-sys-color-outline-variant); height:36px; padding:0 0.9rem; font-size:0.82rem;">Cancel</button>
+          <button class="btn-primary" id="br-confirm-btn" style="gap:0.4rem; height:36px; padding:0 1rem; font-size:0.82rem;">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <span id="br-confirm-label">Apply Rename</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Advanced Search Modal -->
+      <div class="modal-box" id="modal-advanced-search" style="display:none; max-width:460px;">
+        <div class="modal-header">
+          <span>Advanced Search & Filters</span>
+          <button class="btn-icon modal-close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+        </div>
+        <div class="modal-content" style="padding:1rem 1.4rem;">
+          <div class="form-group">
+            <label class="form-label">Extension (e.g. php, webp, pdf, zip)</label>
+            <input type="text" class="form-input" id="adv-ext" placeholder="Comma separated, e.g. webp, jpg">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Category / Media Type</label>
+            <select class="form-input" id="adv-type">
+              <option value="">All Categories</option>
+              <option value="image">Images</option>
+              <option value="video">Videos</option>
+              <option value="audio">Audio</option>
+              <option value="text">Documents / Code</option>
+              <option value="archive">Archives</option>
+            </select>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;">
+            <div class="form-group">
+              <label class="form-label">Date Modified From</label>
+              <input type="date" class="form-input" id="adv-date-from">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Date Modified To</label>
+              <input type="date" class="form-input" id="adv-date-to">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;">
+            <div class="form-group">
+              <label class="form-label">Min Size (MB)</label>
+              <input type="number" class="form-input" id="adv-size-min" placeholder="0" min="0" step="any">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Max Size (MB)</label>
+              <input type="number" class="form-input" id="adv-size-max" placeholder="e.g. 50" min="0" step="any">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex; justify-content:space-between;">
+          <button class="btn-primary" id="btn-adv-reset" style="background:var(--md-sys-color-surface-container-high); color:var(--md-sys-color-on-surface); border:1px solid var(--md-sys-color-outline-variant);">Reset</button>
+          <div style="display:flex; gap:0.4rem;">
+            <button class="btn-icon modal-close" style="width:auto; padding:0 0.8rem;">Cancel</button>
+            <button class="btn-primary" id="btn-adv-apply">Apply Filter</button>
+          </div>
+        </div>
       </div>
 
       <div class="modal-box" id="modal-input" style="display:none;">
@@ -6095,7 +6519,9 @@ if ($action) {
           this.renderLimit = 25;
           this.filteredList = [];
           this.searchDebounceTimer = null;
+          this.searchSeq = 0;
           this.isSearching = false;
+          this.advFilters = { ext: '', type: '', date_from: '', date_to: '', size_min: '', size_max: '' };
           this.starredSet = new Set();
           this.currentSection = 'home';
           this.expandedTreeNodes = new Set(JSON.parse(localStorage.getItem('pg_tree_expanded') || '[]'));
@@ -6323,17 +6749,84 @@ if ($action) {
   
           document.getElementById('search-input').addEventListener('input', (e) => {
             const q = e.target.value.trim();
+            this.searchQuery = q;
             clearTimeout(this.searchDebounceTimer);
-            this.searchDebounceTimer = setTimeout(() => {
-              this.searchQuery = q;
-              if (q.length > 0) {
-                this.performSearch(q);
+
+            // If user cleared the query and no advanced filters are active, cancel dimming immediately
+            if (q.length === 0 && !this.hasActiveAdvFilters()) {
+              this.isSearching = false;
+              this.searchSeq++;
+              this.container.style.opacity = '1';
+              this.renderLimit = 25;
+              if (this.currentSection === 'activity') {
+                this.renderActivityView();
+              } else if (this.currentSection === 'trash') {
+                this.renderTrashView();
+              } else if (this.currentSection === 'starred') {
+                this.loadStarred();
+              } else if (this.currentSection === 'recents') {
+                this.loadRecents();
+              } else if (this.currentSection === 'gallery') {
+                this.loadGallery();
               } else {
-                this.isSearching = false;
-                this.renderLimit = 25;
                 this.renderGallery();
               }
-            }, 280);
+              return;
+            }
+
+            this.searchDebounceTimer = setTimeout(() => {
+              this.performSearch(q);
+            }, 260);
+          });
+
+          // Modal backdrop click listener to safely dismiss modals
+          const mb = document.getElementById('modal-backdrop');
+          if (mb) {
+            mb.addEventListener('click', (e) => {
+              if (e.target.id === 'modal-backdrop') {
+                this.closeModals();
+              }
+            });
+          }
+
+          // Advanced Search Button & Dialog Listeners
+          const btnAdv = document.getElementById('btn-adv-search');
+          if (btnAdv) {
+            btnAdv.addEventListener('click', (e) => {
+              e.stopPropagation();
+              document.getElementById('adv-ext').value = this.advFilters.ext || '';
+              document.getElementById('adv-type').value = this.advFilters.type || '';
+              document.getElementById('adv-date-from').value = this.advFilters.date_from || '';
+              document.getElementById('adv-date-to').value = this.advFilters.date_to || '';
+              document.getElementById('adv-size-min').value = this.advFilters.size_min || '';
+              document.getElementById('adv-size-max').value = this.advFilters.size_max || '';
+              this.showModal('modal-advanced-search');
+            });
+          }
+
+          document.getElementById('btn-adv-reset')?.addEventListener('click', () => {
+            this.advFilters = { ext: '', type: '', date_from: '', date_to: '', size_min: '', size_max: '' };
+            document.getElementById('adv-ext').value = '';
+            document.getElementById('adv-type').value = '';
+            document.getElementById('adv-date-from').value = '';
+            document.getElementById('adv-date-to').value = '';
+            document.getElementById('adv-size-min').value = '';
+            document.getElementById('adv-size-max').value = '';
+            this.updateAdvBtnState();
+            this.closeModals();
+            this.performSearch(this.searchQuery);
+          });
+
+          document.getElementById('btn-adv-apply')?.addEventListener('click', () => {
+            this.advFilters.ext = document.getElementById('adv-ext').value.trim();
+            this.advFilters.type = document.getElementById('adv-type').value.trim();
+            this.advFilters.date_from = document.getElementById('adv-date-from').value.trim();
+            this.advFilters.date_to = document.getElementById('adv-date-to').value.trim();
+            this.advFilters.size_min = document.getElementById('adv-size-min').value.trim();
+            this.advFilters.size_max = document.getElementById('adv-size-max').value.trim();
+            this.updateAdvBtnState();
+            this.closeModals();
+            this.performSearch(this.searchQuery);
           });
   
           const openManga = () => mangaViewer.open();
@@ -6493,8 +6986,51 @@ if ($action) {
           document.getElementById('btn-batch-clear').addEventListener('click', () => this.clearSelection());
           document.getElementById('btn-batch-download').addEventListener('click', () => this.batchDownload());
           document.getElementById('btn-batch-delete').addEventListener('click', () => this.batchDelete());
-          document.getElementById('btn-batch-compress')?.addEventListener('click', () => this.batchCompress());
-          document.getElementById('btn-batch-info').addEventListener('click', () => this.showBatchDetails());
+
+          // Batch Bar 3-Dots Menu Toggle
+          const btnBatchMore = document.getElementById('btn-batch-more');
+          const dropdownBatchMore = document.getElementById('dropdown-batch-more');
+          if (btnBatchMore && dropdownBatchMore) {
+            btnBatchMore.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const rect = btnBatchMore.getBoundingClientRect();
+              dropdownBatchMore.style.bottom = `${window.innerHeight - rect.top + 10}px`;
+              dropdownBatchMore.style.top = 'auto';
+              dropdownBatchMore.style.left = `${Math.max(10, Math.min(rect.left - 90, window.innerWidth - 230))}px`;
+              dropdownBatchMore.classList.toggle('active');
+            });
+          }
+
+          document.getElementById('dbm-rename')?.addEventListener('click', () => {
+            dropdownBatchMore?.classList.remove('active');
+            this.openBatchRename();
+          });
+          document.getElementById('dbm-compress')?.addEventListener('click', () => {
+            dropdownBatchMore?.classList.remove('active');
+            this.batchCompress();
+          });
+          document.getElementById('dbm-info')?.addEventListener('click', () => {
+            dropdownBatchMore?.classList.remove('active');
+            this.showBatchDetails();
+          });
+          document.getElementById('dbm-copy')?.addEventListener('click', () => {
+            dropdownBatchMore?.classList.remove('active');
+            this.setClipboard('copy');
+          });
+          document.getElementById('dbm-cut')?.addEventListener('click', () => {
+            dropdownBatchMore?.classList.remove('active');
+            this.setClipboard('cut');
+          });
+
+          // Batch Rename Inputs Live Listener
+          ['br-find', 'br-replace', 'br-prefix', 'br-suffix', 'br-case', 'br-regex'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', () => this.updateBatchRenamePreview());
+            document.getElementById(id)?.addEventListener('change', () => this.updateBatchRenamePreview());
+          });
+          document.querySelectorAll('input[name="br-target"]').forEach(r => {
+            r.addEventListener('change', () => this.updateBatchRenamePreview());
+          });
+          document.getElementById('br-confirm-btn')?.addEventListener('click', () => this.executeBatchRename());
   
           window.addEventListener('hashchange', () => this.handleHashChange());
   
@@ -6528,6 +7064,8 @@ if ($action) {
             if (this.dropdownSort) this.dropdownSort.classList.remove('active');
             const du = document.getElementById('dropdown-upload');
             if (du) du.classList.remove('active');
+            const dbm = document.getElementById('dropdown-batch-more');
+            if (dbm) dbm.classList.remove('active');
           });
           this.dropdownMore.addEventListener('click', (e) => {
             if (e.target.closest('.dm-item')) {
@@ -6633,7 +7171,14 @@ if ($action) {
           const isGallery = this.currentSection === 'gallery';
           const hideUpload = isStarred || isTrash || isActivity || isGallery;
           const hideNewItems = isStarred || isTrash || isActivity || isGallery;
-    
+          const hideManga = isTrash || isActivity;
+
+          // Hide Manga Mode in Trash & Activity
+          const btnMangaDesk = document.getElementById('btn-manga-desk');
+          const dmManga = document.getElementById('dm-manga');
+          if (btnMangaDesk) btnMangaDesk.style.display = hideManga ? 'none' : 'flex';
+          if (dmManga) dmManga.style.display = hideManga ? 'none' : 'flex';
+
           // Desktop Upload Button
           const btnUploadDesk = document.getElementById('btn-upload-desk');
           if (btnUploadDesk) btnUploadDesk.style.display = hideUpload ? 'none' : 'flex';
@@ -6876,7 +7421,7 @@ if ($action) {
           });
         }
   
-        async loadDir(path) {
+        async loadDir(path, clearSearch = true) {
           this.currentSection = 'home';
           this.updateControlsVisibility();
           const toolbar = document.querySelector('.toolbar-actions');
@@ -6887,10 +7432,14 @@ if ($action) {
           this.selectedItems.clear();
           this.updateBatchBar();
           this.renderLimit = 25;
-          this.isSearching = false;
-          const searchInput = document.getElementById('search-input');
-          if (searchInput) searchInput.value = '';
-          this.searchQuery = '';
+
+          if (clearSearch) {
+            this.isSearching = false;
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) searchInput.value = '';
+            this.searchQuery = '';
+          }
+
           this.sidebar.classList.remove('open');
           this.sidebarBackdrop.classList.remove('active');
           this.updateTreeActive();
@@ -6955,26 +7504,48 @@ if ($action) {
           }
         }
   
-        async performSearch(query) {
+        async performSearch(query = '') {
           this.isSearching = true;
           this.renderLimit = 25;
+          const queryText = query !== undefined ? query : this.searchQuery;
+          const seq = ++this.searchSeq;
+
+          if (!queryText && !this.hasActiveAdvFilters()) {
+            this.isSearching = false;
+            this.container.style.opacity = '1';
+            this.renderLimit = 25;
+            if (this.currentSection === 'activity') this.renderActivityView();
+            else if (this.currentSection === 'trash') this.renderTrashView();
+            else if (this.currentSection === 'starred') this.loadStarred();
+            else if (this.currentSection === 'recents') this.loadRecents();
+            else if (this.currentSection === 'gallery') this.loadGallery();
+            else this.renderGallery();
+            return;
+          }
+
           if (this.currentSection === 'activity') {
+            this.container.style.opacity = '1';
             this.renderActivityView();
             return;
           }
           if (this.currentSection === 'trash') {
+            this.container.style.opacity = '1';
             this.renderTrashView();
             return;
           }
 
           if (this.currentSection === 'gallery') {
-            this.filteredList = this.data.files.filter(f => f.name.toLowerCase().includes(query.toLowerCase()));
-            this.filteredList = this.applySort(this.filteredList);
-            this.dirTitle.innerText = `Gallery Search: "${query}"`;
+            this.container.style.opacity = '1';
+            let list = (this.data.files || []).filter(f => f.name.toLowerCase().includes(queryText.toLowerCase()));
+            if (this.advFilters.ext) {
+              const exts = this.advFilters.ext.toLowerCase().split(',').map(s => s.trim().replace('.', ''));
+              list = list.filter(f => exts.includes((f.ext || '').toLowerCase()));
+            }
+            this.filteredList = this.applySort(list);
+            this.dirTitle.innerText = `Gallery Search: "${queryText || 'Filtered'}"`;
             this.dirStats.innerText = `${this.filteredList.length} matching photo(s) found`;
             this.container.innerHTML = '';
             this.renderedCount = 0;
-            this.renderLimit = 25;
             this.masonryCols = [];
             this.hasUpCard = false;
             if (this.layout === 'columns') {
@@ -6994,38 +7565,67 @@ if ($action) {
             return;
           }
 
-          this.dirStats.innerText = `Searching for "${query}" in subfolders...`;
+          this.dirStats.innerText = `Searching in files & subfolders...`;
           this.container.style.opacity = '0.6';
-  
+
+          const params = new URLSearchParams();
+          params.append('action', 'search');
+          params.append('dir', this.currentPath || '');
+          params.append('q', queryText);
+          if (this.advFilters.ext) params.append('ext', this.advFilters.ext);
+          if (this.advFilters.type) params.append('type', this.advFilters.type);
+          if (this.advFilters.date_from) params.append('date_from', this.advFilters.date_from);
+          if (this.advFilters.date_to) params.append('date_to', this.advFilters.date_to);
+          if (this.advFilters.size_min) params.append('size_min', parseFloat(this.advFilters.size_min) * 1024 * 1024);
+          if (this.advFilters.size_max) params.append('size_max', parseFloat(this.advFilters.size_max) * 1024 * 1024);
+
           try {
-            const res = await fetch(`?action=search&dir=${encodeURIComponent(this.currentPath)}&q=${encodeURIComponent(query)}`);
+            const res = await fetch(`?${params.toString()}`);
+            if (seq !== this.searchSeq) return; // Stale search result discarded
             if (!res.ok) throw new Error('Search failed');
             const results = await res.json();
-  
-            let filteredFiles = results.files.filter(f => this.filter === 'all' || f.type === this.filter);
-            let filteredFolders = results.folders;
-  
+            if (seq !== this.searchSeq) return;
+
+            let filteredFiles = (results.files || []).filter(f => this.filter === 'all' || f.type === this.filter);
+            let filteredFolders = this.filter === 'all' ? (results.folders || []) : [];
+
+            filteredFolders = this.applySort(filteredFolders);
+            filteredFiles = this.applySort(filteredFiles);
+
             this.filteredList = [
               ...filteredFolders.map(f => ({ ...f, isDir: true })),
               ...filteredFiles.map(f => ({ ...f, isDir: false }))
             ];
-  
-            this.dirTitle.innerText = `Search: "${query}"`;
-            this.dirStats.innerText = `${results.count} matching item(s) found`;
-  
+
+            this.dirTitle.innerText = queryText ? `Search: "${queryText}"` : 'Advanced Search Results';
+            this.dirStats.innerText = `${this.filteredList.length} matching item(s) found`;
+
             this.container.style.opacity = '1';
             this.container.innerHTML = '';
             this.renderedCount = 0;
             this.renderLimit = 25;
-  
+            this.masonryCols = [];
+            this.hasUpCard = false;
+
+            if (this.layout === 'columns') {
+              const numCols = this.getMasonryColCount();
+              for (let i = 0; i < numCols; i++) {
+                const col = document.createElement('div');
+                col.className = 'masonry-col';
+                this.container.appendChild(col);
+                this.masonryCols.push(col);
+              }
+            }
+
             if (!this.filteredList.length) {
               this.container.innerHTML = `<div class="center-state"><svg viewBox="0 0 24 24" style="width:48px; height:48px; opacity:0.4;"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg><p>No matches found</p></div>`;
               return;
             }
-  
+
             this.appendBatch();
             this.updateBatchBar();
           } catch (e) {
+            this.container.style.opacity = '1';
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
           }
         }
@@ -7104,6 +7704,22 @@ if ($action) {
           } catch (e) {}
         }
   
+        hasActiveAdvFilters() {
+          const f = this.advFilters;
+          return !!(f.ext || f.type || f.date_from || f.date_to || f.size_min || f.size_max);
+        }
+
+        updateAdvBtnState() {
+          const btn = document.getElementById('btn-adv-search');
+          if (btn) {
+            if (this.hasActiveAdvFilters()) {
+              btn.classList.add('active');
+            } else {
+              btn.classList.remove('active');
+            }
+          }
+        }
+
         applySort(items) {
           return [...items].sort((a, b) => {
             const nameA = a.name || '';
@@ -7120,6 +7736,22 @@ if ($action) {
             if (this.sortBy === 'date_asc') {
               return (a.mtime || 0) - (b.mtime || 0);
             }
+            if (this.sortBy === 'size_desc') {
+              return (b.size || 0) - (a.size || 0);
+            }
+            if (this.sortBy === 'size_asc') {
+              return (a.size || 0) - (b.size || 0);
+            }
+            if (this.sortBy === 'ext_asc') {
+              const extA = (a.ext || (a.name ? a.name.split('.').pop() : '')).toLowerCase();
+              const extB = (b.ext || (b.name ? b.name.split('.').pop() : '')).toLowerCase();
+              return extA.localeCompare(extB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'ext_desc') {
+              const extA = (a.ext || (a.name ? a.name.split('.').pop() : '')).toLowerCase();
+              const extB = (b.ext || (b.name ? b.name.split('.').pop() : '')).toLowerCase();
+              return extB.localeCompare(extA, undefined, { numeric: true, sensitivity: 'base' });
+            }
             return 0;
           });
         }
@@ -7129,7 +7761,11 @@ if ($action) {
             name_asc: 'Name (A-Z)',
             name_desc: 'Name (Z-A)',
             date_desc: 'Date (Newest)',
-            date_asc: 'Date (Oldest)'
+            date_asc: 'Date (Oldest)',
+            size_desc: 'Size (Largest)',
+            size_asc: 'Size (Smallest)',
+            ext_asc: 'Extension (A-Z)',
+            ext_desc: 'Extension (Z-A)'
           };
           if (this.btnSort) {
             this.btnSort.title = `Sort: ${labels[this.sortBy] || 'Sort Items'}`;
@@ -7391,6 +8027,8 @@ if ($action) {
           const scrollEl = document.getElementById('main-content');
           const st = scrollEl ? scrollEl.scrollTop : 0;
           this.selectedItems.clear();
+          const dbm = document.getElementById('dropdown-batch-more');
+          if (dbm) dbm.classList.remove('active');
           this.updateBatchBar();
           if (this.isSearching) {
             this.appendBatch();
@@ -7491,6 +8129,194 @@ if ($action) {
           fd.append('dir', this.currentPath || '');
           items.forEach(i => fd.append('items[]', i));
           this.downloadZipWithProgress('?action=download_zip', fd, 'selected_items.zip');
+        }
+  
+        openBatchRename() {
+          const items = Array.from(this.selectedItems);
+          if (!items.length) return;
+
+          this.batchRenameTasks = items.map(path => {
+            const fileName = path.split('/').pop();
+            const dotIdx = fileName.lastIndexOf('.');
+            const isDir = (this.filteredList.find(f => f.path === path) || {}).isDir || false;
+            return {
+              path: path,
+              isDir: isDir,
+              originalName: fileName,
+              baseName: (!isDir && dotIdx > 0) ? fileName.substring(0, dotIdx) : fileName,
+              ext: (!isDir && dotIdx > 0) ? fileName.substring(dotIdx + 1) : '',
+              newName: fileName
+            };
+          });
+
+          document.getElementById('br-title').innerText = `Batch Rename (${items.length} items)`;
+          document.getElementById('br-find').value = '';
+          document.getElementById('br-replace').value = '';
+          document.getElementById('br-prefix').value = '';
+          document.getElementById('br-suffix').value = '';
+          document.getElementById('br-case').checked = false;
+          document.getElementById('br-regex').checked = false;
+
+          const nameRadio = document.querySelector('input[name="br-target"][value="name"]');
+          if (nameRadio) nameRadio.checked = true;
+
+          this.updateBatchRenamePreview();
+          this.showModal('modal-batch-rename');
+        }
+
+        updateBatchRenamePreview() {
+          if (!this.batchRenameTasks || !this.batchRenameTasks.length) return;
+
+          const findVal = document.getElementById('br-find')?.value || '';
+          const replaceVal = document.getElementById('br-replace')?.value || '';
+          const prefix = document.getElementById('br-prefix')?.value || '';
+          const suffix = document.getElementById('br-suffix')?.value || '';
+          const isCase = document.getElementById('br-case')?.checked || false;
+          const isRegex = document.getElementById('br-regex')?.checked || false;
+          const target = document.querySelector('input[name="br-target"]:checked')?.value || 'name';
+
+          let regex = null;
+          let regexError = false;
+
+          if (findVal) {
+            try {
+              regex = isRegex ? new RegExp(findVal, isCase ? 'g' : 'gi') : null;
+            } catch (e) {
+              regexError = true;
+            }
+          }
+
+          const seenNames = new Set();
+          let modifiedCount = 0;
+          let hasCollisions = false;
+
+          this.batchRenameTasks.forEach(task => {
+            let curBase = task.baseName;
+            let curExt = task.ext;
+            let curFull = task.originalName;
+
+            if (findVal && !regexError) {
+              if (target === 'name') {
+                if (regex) {
+                  curBase = curBase.replace(regex, replaceVal);
+                } else {
+                  const flags = isCase ? 'g' : 'gi';
+                  const esc = findVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  curBase = curBase.replace(new RegExp(esc, flags), replaceVal);
+                }
+              } else if (target === 'ext' && !task.isDir && curExt) {
+                if (regex) {
+                  curExt = curExt.replace(regex, replaceVal);
+                } else {
+                  const flags = isCase ? 'g' : 'gi';
+                  const esc = findVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  curExt = curExt.replace(new RegExp(esc, flags), replaceVal);
+                }
+              } else if (target === 'full') {
+                if (regex) {
+                  curFull = curFull.replace(regex, replaceVal);
+                } else {
+                  const flags = isCase ? 'g' : 'gi';
+                  const esc = findVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  curFull = curFull.replace(new RegExp(esc, flags), replaceVal);
+                }
+                const dIdx = curFull.lastIndexOf('.');
+                if (!task.isDir && dIdx > 0) {
+                  curBase = curFull.substring(0, dIdx);
+                  curExt = curFull.substring(dIdx + 1);
+                } else {
+                  curBase = curFull;
+                  curExt = '';
+                }
+              }
+            }
+
+            if (prefix) curBase = prefix + curBase;
+            if (suffix) curBase = curBase + suffix;
+
+            let finalName = (!task.isDir && curExt) ? `${curBase}.${curExt}` : curBase;
+            finalName = finalName.replace(/[^\w\s\d\.\-_~()[\]]/u, '');
+            task.newName = finalName || task.originalName;
+
+            if (task.newName !== task.originalName) modifiedCount++;
+            if (seenNames.has(task.newName.toLowerCase())) {
+              hasCollisions = true;
+              task.collision = true;
+            } else {
+              task.collision = false;
+              seenNames.add(task.newName.toLowerCase());
+            }
+          });
+
+          const tbody = document.getElementById('br-preview-body');
+          if (tbody) {
+            tbody.innerHTML = this.batchRenameTasks.map(task => {
+              const isMod = task.newName !== task.originalName;
+              const statusClass = task.collision ? 'collision' : (isMod ? 'modified' : '');
+              return `
+                <tr>
+                  <td style="font-family:'JetBrains Mono', monospace; color:var(--md-sys-color-on-surface-variant); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escapeHtml(task.originalName)}</td>
+                  <td style="color:var(--md-sys-color-outline); width:20px;">➔</td>
+                  <td class="br-preview-new ${statusClass}" style="font-family:'JetBrains Mono', monospace; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escapeHtml(task.newName)}${task.collision ? ' (duplicate)' : ''}</td>
+                </tr>
+              `;
+            }).join('');
+          }
+
+          const summary = document.getElementById('br-status-summary');
+          const confirmBtn = document.getElementById('br-confirm-btn');
+
+          if (regexError) {
+            if (summary) summary.innerHTML = `<span style="color:#ff7b72;">Invalid Regular Expression syntax</span>`;
+            if (confirmBtn) confirmBtn.disabled = true;
+          } else if (hasCollisions) {
+            if (summary) summary.innerHTML = `<span style="color:#ff7b72;">Conflict detected: duplicate destination filename(s)</span>`;
+            if (confirmBtn) confirmBtn.disabled = true;
+          } else {
+            if (summary) summary.innerHTML = `<span>${modifiedCount} of ${this.batchRenameTasks.length} item(s) will change</span>`;
+            if (confirmBtn) confirmBtn.disabled = modifiedCount === 0;
+          }
+        }
+
+        async executeBatchRename() {
+          const tasks = (this.batchRenameTasks || []).filter(t => t.newName && t.newName !== t.originalName);
+          if (!tasks.length) return;
+
+          const renamesPayload = tasks.map(t => ({
+            path: t.path,
+            new_name: t.newName
+          }));
+
+          const confirmBtn = document.getElementById('br-confirm-btn');
+          if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<svg class="m3-spinner" style="width:16px;height:16px;margin:0;" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg> Renaming...';
+          }
+
+          try {
+            const fd = new FormData();
+            fd.append('action', 'batch_rename');
+            fd.append('renames', JSON.stringify(renamesPayload));
+
+            const res = await fetch('', { method: 'POST', body: fd });
+            const data = await res.json();
+
+            if (data.success) {
+              this.toast(`Renamed ${data.renamed_count} item(s) successfully`);
+              this.closeModals();
+              this.clearSelection();
+              this.refresh();
+            } else {
+              throw new Error(data.error || 'Batch rename failed');
+            }
+          } catch (e) {
+            this.toast(e.message || 'Batch rename failed');
+          } finally {
+            if (confirmBtn) {
+              confirmBtn.disabled = false;
+              confirmBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Apply Rename';
+            }
+          }
         }
   
         batchCompress() {
@@ -7976,7 +8802,12 @@ if ($action) {
 
           if (this.searchQuery) {
             const q = this.searchQuery.toLowerCase();
-            activities = activities.filter(act => (act.name || '').toLowerCase().includes(q) || (act.path || '').toLowerCase().includes(q));
+            activities = activities.filter(act => 
+              (act.name || '').toLowerCase().includes(q) || 
+              (act.path || '').toLowerCase().includes(q) ||
+              (act.details || '').toLowerCase().includes(q) ||
+              (act.action || '').toLowerCase().includes(q)
+            );
           }
 
           if (this.filter && this.filter !== 'all') {
@@ -8009,7 +8840,10 @@ if ($action) {
           `;
 
           if (!activities.length) {
-            this.container.innerHTML = `<div class="activity-view-wrapper">${statsHtml}<div class="center-state"><p>${this.filter !== 'all' ? 'No activity found for category: ' + this.filter : 'No recorded activity yet'}</p></div></div>`;
+            const emptyMsg = this.searchQuery 
+              ? `No activity matching "${this.escapeHtml(this.searchQuery)}"`
+              : (this.filter !== 'all' ? `No activity found for category: ${this.filter}` : 'No recorded activity yet');
+            this.container.innerHTML = `<div class="activity-view-wrapper">${statsHtml}<div class="center-state"><p>${emptyMsg}</p></div></div>`;
             return;
           }
 
@@ -8224,27 +9058,38 @@ if ($action) {
           }
 
           if (!items.length) {
-            this.container.innerHTML = `
-              <div class="center-state" style="grid-column: 1 / -1; padding: 3.5rem 0;">
-                <svg viewBox="0 0 24 24" style="width:64px; height:64px; opacity:0.3; color:var(--md-sys-color-outline); margin-bottom:0.6rem;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                <div style="font-weight:700; font-size:1.1rem; color:var(--md-sys-color-on-surface);">Trash is Empty</div>
-                <div style="font-size:0.82rem; color:var(--md-sys-color-on-surface-variant);">Deleted files and folders will appear here.</div>
-              </div>
-            `;
+            if (this.searchQuery) {
+              this.container.innerHTML = `
+                <div class="center-state" style="grid-column: 1 / -1; padding: 3.5rem 0;">
+                  <svg viewBox="0 0 24 24" style="width:48px; height:48px; opacity:0.4; color:var(--md-sys-color-outline); margin-bottom:0.6rem;"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                  <div style="font-weight:700; font-size:1.1rem; color:var(--md-sys-color-on-surface);">No matching trash items</div>
+                  <div style="font-size:0.82rem; color:var(--md-sys-color-on-surface-variant);">No items matching "${this.escapeHtml(this.searchQuery)}" found in trash.</div>
+                </div>
+              `;
+            } else {
+              this.container.innerHTML = `
+                <div class="center-state" style="grid-column: 1 / -1; padding: 3.5rem 0;">
+                  <svg viewBox="0 0 24 24" style="width:64px; height:64px; opacity:0.3; color:var(--md-sys-color-outline); margin-bottom:0.6rem;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  <div style="font-weight:700; font-size:1.1rem; color:var(--md-sys-color-on-surface);">Trash is Empty</div>
+                  <div style="font-size:0.82rem; color:var(--md-sys-color-on-surface-variant);">Deleted files and folders will appear here.</div>
+                </div>
+              `;
+            }
             return;
           }
 
           let html = `
-            <div style="grid-column: 1 / -1; display:flex; justify-content:space-between; align-items:center; background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:16px; padding:0.75rem 1.1rem; margin-bottom:0.6rem;">
-              <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; color:var(--md-sys-color-on-surface-variant);">
-                <span style="font-weight:700; color:var(--md-sys-color-on-surface); font-size:0.95rem;">${items.length}</span> item(s) in trash
+            <div class="trash-view-wrapper">
+              <div style="display:flex; justify-content:space-between; align-items:center; background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:16px; padding:0.75rem 1.1rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; color:var(--md-sys-color-on-surface-variant);">
+                  <span style="font-weight:700; color:var(--md-sys-color-on-surface); font-size:0.95rem;">${items.length}</span> item(s) in trash
+                </div>
+                <button class="btn-primary" style="background:#dc2626; height:34px; padding:0 0.95rem; font-size:0.8rem; gap:0.4rem;" onclick="app.emptyTrash()">
+                  <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  Empty Trash
+                </button>
               </div>
-              <button class="btn-primary" style="background:#dc2626; height:34px; padding:0 0.95rem; font-size:0.8rem; gap:0.4rem;" onclick="app.emptyTrash()">
-                <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                Empty Trash
-              </button>
-            </div>
-            <div style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:0.55rem; width:100%;">
+              <div style="display:flex; flex-direction:column; gap:0.55rem; width:100%;">
           `;
 
           const toRender = items.slice(0, this.renderLimit);
@@ -8280,7 +9125,7 @@ if ($action) {
             `;
           });
 
-          html += `</div>`;
+          html += `</div></div>`;
           this.container.innerHTML = html;
         }
 
@@ -8987,8 +9832,11 @@ if ($action) {
           }
 
           this.modalStack = [];
-          document.getElementById('modal-backdrop').classList.remove('active');
+          const mb = document.getElementById('modal-backdrop');
+          if (mb) mb.classList.remove('active');
           document.querySelectorAll('.modal-box').forEach(m => m.style.display = 'none');
+          this.container.style.opacity = '1';
+
           const docContainer = document.getElementById('doc-viewer-container');
           if (docContainer) docContainer.innerHTML = '';
 
@@ -8998,6 +9846,12 @@ if ($action) {
           const activeTarget = this.activeModalPath || (window.hdmEngine ? window.hdmEngine.activePath : '');
           this.activeModalPath = '';
           if (window.hdmEngine) window.hdmEngine.activePath = '';
+
+          // If search was active before or during modal view, keep it active and do not wipe search
+          if (this.isSearching && (this.searchQuery || this.hasActiveAdvFilters())) {
+            this.performSearch(this.searchQuery);
+            return;
+          }
 
           // If opened from a dedicated section (recents, starred, activity, trash, gallery), return to it
           const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
@@ -9030,7 +9884,7 @@ if ($action) {
           if (window.location.hash !== targetHash) {
             window.location.hash = targetHash;
           } else {
-            this.loadDir(parentDir);
+            this.loadDir(parentDir, false);
           }
           this.updateDocTitle(parentDir ? parentDir.split('/').pop() : '', (this.data.folders?.length || 0) + (this.data.files?.length || 0));
         }
