@@ -1,15 +1,26 @@
-<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/16e41361-2528-4b96-a74e-275bf306d655" /># PHPFiles - Modern Single-File PHP File Manager & Media Gallery
+# PHPFiles - Modern Single-File PHP File Manager & Media Gallery
 
 <img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/f8deeff8-e89d-47c0-ba63-428dc0e9689e" />
 
-**PHPFiles** is a high-performance, single-file PHP file manager, document workspace, and media gallery. Built on Google Material Design 3 principles, it combines desktop-class file management with rich media streaming, client-side OPFS caching, and zero external database dependencies.
+**PHPFiles** is a high-performance, single-file PHP file manager, document workspace, in-app image studio, and media gallery. Built on Google Material Design 3 principles, it combines desktop-class file management with rich media streaming, client-side OPFS caching, and zero external database dependencies.
 
 ---
 
 ## ✨ Key Features
 
-- **Single-File Architecture:** The entire application—backend REST endpoints, frontend SPA routing, and UI—is encapsulated in a single `.php` file.
-- **Material Design 3 Interface:** Adaptive layout featuring Light and Dark modes, customizable grid density (1 to 8 columns), fluid masonry layout, and compact list view.
+- **Single-File Architecture:** The entire application—backend REST endpoints, frontend SPA routing, canvas engines, and UI—is self-contained in a single `.php` file.
+- **Material Design 3 Interface & 4 Distinct Layout Modes:**
+  - **Square Grid (1:1):** Classic uniform square tiles with customizable grid density (1 to 8 columns).
+  - **Column Masonry (Waterfall):** Pinterest-style vertical multi-column flow.
+  - **Justified Row Masonry (Dynamic Aspect Ratio):** PicHome / Google Photos-style layout where images maintain natural aspect ratios with fixed row heights, dynamically scalable via the density slider (125px to 380px).
+  - **Compact List View:** High-density file list with metadata, file sizes, and modification dates.
+- **Built-In In-App Image Studio & Canvas Editor:**
+  - **Interactive 8-Point Crop Engine:** Draggable & resizable boundary handles with clear visual masks and aspect ratio presets (*Freeform, 1:1 Square, 16:9 Landscape, 4:3 Standard, 9:16 Story/Reel*).
+  - **Transforms:** 90° Clockwise/Counter-Clockwise rotations, Flip Horizontal, and Flip Vertical.
+  - **Live Filter Adjustments:** Sliders for Brightness, Contrast, and Saturation, plus instant Grayscale, Sepia, and Invert toggles.
+  - **Freeform Draggable Text & Header Banners:** Click or drag text anywhere on the canvas with custom font size, text color picker, and full-width top/bottom header banner stamping.
+  - **Undo & Redo System:** Full historical step stack (`Ctrl + Z` / `Ctrl + Y`) for all filters, crops, transforms, and text overlays.
+  - **Dual Save Engine:** Option to **Permanently Overwrite** (with automatic version snapshot backup) or **Save as Copy / Duplicate** (`filename_edited_(n).jpg`).
 - **Low-Spec Hardware & Media Streaming Optimizations:**
   - **Zero Memory Accumulation:** Bypasses PHP `zlib.output_compression` and Apache `gzip` on streaming endpoints, preventing low-RAM devices (e.g., 2GB laptops) from crashing due to memory buffering.
   - **High-Throughput 512KB Chunking:** Optimized byte-range streaming (`HTTP 206 Partial Content`) with shared non-blocking file locks (`flock`) and connection abort listeners.
@@ -26,7 +37,7 @@
   - Fullscreen Presentation Mode for slideshows (`---` delimiter slide separation).
   - In-editor Find & Replace (with match counters), Undo/Redo stack, and word wrap toggle.
 - **File Version Control & LCS Diff Viewer:**
-  - Automatic incremental version backup snapshots created before every file save or restore.
+  - Automatic incremental version backup snapshots created before every file save, image overwrite, or restore.
   - Bounded Longest Common Subsequence (LCS) line diff algorithm with fast prefix/suffix trimming for large files.
   - Visual side-by-side/inline comparison of additions (`+`) and deletions (`-`) with one-click rollback.
 - **Document & Office Suite Rendering:**
@@ -45,6 +56,7 @@
   - **Remote URL Downloader:** Fetch files directly to the server from remote HTTP/HTTPS links with automated filename detection via Content-Disposition headers.
 - **Drive Navigation & Sections:**
   - **Home & Folder Tree:** Interactive sidebar folder navigation tree with expand/collapse state memory.
+  - **Gallery Mode:** Consolidated view of all images across subdirectories.
   - **Recents:** Chronological view of recently updated or uploaded files and folders.
   - **Starred Items:** Bookmark favorite files and directories for quick access.
   - **File Activity Log:** Audit log tracking created, modified, renamed, uploaded, and trashed file activities with daily/weekly analytics.
@@ -61,7 +73,7 @@
 
 | Category | Supported Extensions |
 | :--- | :--- |
-| **Images** | `jpg`, `jpeg`, `png`, `gif`, `webp`, `avif`, `bmp`, `svg` |
+| **Images** | `jpg`, `jpeg`, `png`, `gif`, `webp`, `avif`, `bmp`, `svg` *(In-app editing supported for raster formats)* |
 | **Videos** | `mp4`, `webm`, `mov`, `m4v`, `ogv`, `mkv`, `avi`, `ts`, `3gp`, `wmv`, `flv` |
 | **Audio** | `mp3`, `wav`, `ogg`, `flac`, `m4a`, `aac`, `opus`, `wma`, `m4r`, `mid`, `midi` |
 | **Documents / Code** | `txt`, `md`, `markdown`, `json`, `js`, `css`, `html`, `htm`, `php`, `py`, `c`, `cpp`, `sh`, `log`, `xml`, `yaml`, `yml`, `ini`, `env`, `sql`, `csv`, `pdf`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `enc` |
@@ -73,7 +85,7 @@
 
 - **PHP Version:** PHP 7.4 or higher (PHP 8.x recommended).
 - **PHP Extensions:**
-  - `gd` (Required for image thumbnail generation and WebP/AVIF support).
+  - `gd` (Required for image thumbnail generation, WebP/AVIF processing, and canvas image manipulation).
   - `fileinfo` (Standard, for MIME type detection).
   - `exif` *(Optional — for extracting camera EXIF metadata)*.
   - `zip` *(Optional — for ZIP archive creation, inspection, and extraction)*.
@@ -146,7 +158,7 @@ $config = [
 | :--- | :--- | :--- |
 | `?` / `F1` | Open Keyboard Shortcuts Cheat Sheet | Global |
 | `/` or `Ctrl + F` | Focus Search Bar | File Manager |
-| `Ctrl + F` | Find & Replace Card | Editor |
+| `Ctrl + F` | Find & Replace Card | Text / Code Editor |
 | `Ctrl + A` | Select all items | File Manager |
 | `Ctrl + Shift + N` | Create a new folder | File Manager |
 | `Ctrl + Shift + F` | Create a new text file | File Manager |
@@ -154,9 +166,9 @@ $config = [
 | `Ctrl + V` | Paste copied/cut items | File Manager |
 | `F2` | Rename selected item | File Manager |
 | `Delete` | Move selected item(s) to Trash | File Manager |
-| `Ctrl + S` | Save active document | Editor |
-| `Ctrl + B` / `Ctrl + I` | Bold / Italic syntax | Editor |
-| `Ctrl + Z` / `Ctrl + Y` | Undo / Redo changes | Editor |
+| `Ctrl + S` | Save active document | Text / Code Editor |
+| `Ctrl + B` / `Ctrl + I` | Bold / Italic syntax | Text / Code Editor |
+| `Ctrl + Z` / `Ctrl + Y` | Undo / Redo changes | Code & Image Editor |
 | `←` / `→` | Previous / Next media item | Lightbox |
 | `Space` | Play / Pause media playback | Lightbox |
 | `Esc` | Close active modal, Lightbox, or Manga viewer | Global |
