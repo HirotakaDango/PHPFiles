@@ -674,6 +674,277 @@ function cleanOldTrash($config) {
   if ($updated) saveDriveMeta($config['meta_file'], $meta);
 }
 
+if (isset($_GET['share'])) {
+  $token = $_GET['share'];
+  $meta = getDriveMeta($config['meta_file']);
+  if (!isset($meta['shares'][$token])) {
+    http_response_code(404);
+    echo "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>404 Not Found</title><style>body{background:#141218;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}</style></head><body><div style='text-align:center;'><h2>404 - Link Expired or Invalid</h2><p style='color:#aaa;'>This shared item is no longer available.</p></div></body></html>";
+    exit;
+  }
+
+  $currentScript = basename($_SERVER['SCRIPT_NAME'] ?? ($_SERVER['PHP_SELF'] ?? 'index.php'));
+  $rootRel = ltrim(str_replace(['\\', '//'], '/', $meta['shares'][$token]['rel'] ?? ''), '/');
+  $basePath = safePath($config['root_dir'], $rootRel);
+  if (!$basePath || !file_exists($basePath)) {
+    http_response_code(404);
+    echo "Item missing on server.";
+    exit;
+  }
+
+  $isBaseFolder = is_dir($basePath);
+  $reqSub = trim(str_replace(['\\', '..'], ['/', ''], $_GET['file'] ?? ($_GET['f'] ?? '')), '/');
+  $targetPath = $basePath;
+
+  if ($isBaseFolder && $reqSub !== '') {
+    $resolvedSub = safePath($basePath, $reqSub);
+    if ($resolvedSub && file_exists($resolvedSub) && strpos(realpath($resolvedSub), realpath($basePath)) === 0) {
+      $targetPath = $resolvedSub;
+    } else {
+      $reqSub = '';
+      $targetPath = $basePath;
+    }
+  }
+
+  $isDownload = !empty($_GET['download']) || ($_GET['action'] ?? '') === 'download';
+  $isRaw = !empty($_GET['raw']) || ($_GET['action'] ?? '') === 'raw';
+  $isThumb = !empty($_GET['thumb']) || ($_GET['action'] ?? '') === 'thumb';
+
+  if ($isThumb && is_file($targetPath)) {
+    $hash = md5($targetPath . filemtime($targetPath) . filesize($targetPath));
+    $cachePath = $config['cache_dir'] . DIRECTORY_SEPARATOR . $hash . '.jpg';
+    if (!file_exists($cachePath)) {
+      createThumbnail($targetPath, $cachePath, 480, 85);
+    }
+    if (file_exists($cachePath)) {
+      header('Content-Type: image/jpeg');
+      header('Content-Length: ' . filesize($cachePath));
+      readfile($cachePath);
+    } else {
+      $mime = mime_content_type($targetPath) ?: 'application/octet-stream';
+      header('Content-Type: ' . $mime);
+      readfile($targetPath);
+    }
+    exit;
+  }
+
+  if ($isRaw && is_file($targetPath)) {
+    $mime = mime_content_type($targetPath) ?: 'application/octet-stream';
+    streamRangeFile($targetPath, $mime);
+    exit;
+  }
+
+  if ($isDownload) {
+    if (is_dir($targetPath)) {
+      if (!class_exists('ZipArchive')) {
+        http_response_code(500);
+        echo "ZipArchive extension required.";
+        exit;
+      }
+      $zipName = (basename($targetPath) ?: 'shared_folder') . '.zip';
+      $tempZip = tempnam(sys_get_temp_dir(), 'zip_');
+      $zip = new ZipArchive();
+      if ($zip->open($tempZip, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
+        $dirBase = realpath($targetPath);
+        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($targetPath, RecursiveDirectoryIterator::SKIP_DOTS));
+        foreach ($files as $f) {
+          if (!$f->isFile()) continue;
+          $localName = ltrim(str_replace(['\\', '//'], '/', substr($f->getRealPath(), strlen($dirBase))), '/');
+          $zip->addFile($f->getRealPath(), $localName);
+        }
+        $zip->close();
+        while (ob_get_level()) ob_end_clean();
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . $zipName . '"');
+        header('Content-Length: ' . filesize($tempZip));
+        readfile($tempZip);
+        @unlink($tempZip);
+        exit;
+      }
+    } else {
+      while (ob_get_level()) ob_end_clean();
+      header('Content-Type: application/octet-stream');
+      header('Content-Disposition: attachment; filename="' . basename($targetPath) . '"');
+      header('Content-Length: ' . filesize($targetPath));
+      readfile($targetPath);
+      exit;
+    }
+  }
+
+  $isCurrentDir = is_dir($targetPath);
+  $itemName = basename($targetPath) ?: 'Shared Folder';
+  $ext = strtolower(pathinfo($targetPath, PATHINFO_EXTENSION));
+  $fileType = getFileType($ext, $config);
+  $rawUrl = $currentScript . "?share=" . urlencode($token) . "&raw=1" . ($reqSub ? '&file=' . urlencode($reqSub) : '');
+  $downloadUrl = $currentScript . "?share=" . urlencode($token) . "&download=1" . ($reqSub ? '&file=' . urlencode($reqSub) : '');
+
+  $fullOriginalPath = trim($rootRel . ($reqSub ? '/' . $reqSub : ''), '/');
+  $rootBaseName = basename($rootRel) ?: 'Root';
+
+  $origAppUrl = $currentScript . '#/' . implode('/', array_map('rawurlencode', explode('/', $fullOriginalPath)));
+
+  $breadcrumbs = [];
+  if ($isBaseFolder) {
+    $breadcrumbs[] = [
+      'name'   => $rootBaseName,
+      'url'    => $currentScript . "?share=" . urlencode($token),
+      'active' => empty($reqSub)
+    ];
+    if ($reqSub) {
+      $parts = explode('/', $reqSub);
+      $accum = '';
+      foreach ($parts as $idx => $part) {
+        if ($part === '') continue;
+        $accum = $accum ? ($accum . '/' . $part) : $part;
+        $isLast = ($idx === count($parts) - 1);
+        $breadcrumbs[] = [
+          'name'   => $part,
+          'url'    => $currentScript . "?share=" . urlencode($token) . "&file=" . urlencode($accum),
+          'active' => $isLast
+        ];
+      }
+    }
+  } else {
+    $breadcrumbs[] = [
+      'name'   => $itemName,
+      'url'    => $currentScript . "?share=" . urlencode($token),
+      'active' => true
+    ];
+  }
+  ?>
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+      <title><?= htmlspecialchars($itemName) ?> - Shared File</title>
+      <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100dvh; max-height: 100dvh; overflow: hidden; background: #141218; color: #e6e0e9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+        .topbar { height: 50px; flex-shrink: 0; background: #1d1b20; border-bottom: 1px solid #49454f; display: flex; align-items: center; justify-content: space-between; padding: 0 1rem; z-index: 100; gap: 0.5rem; }
+        .topbar-title { font-weight: 700; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 0.5rem; }
+        .topbar-actions { display: flex; align-items: center; gap: 0.5rem; }
+        .subbar-path { height: 38px; flex-shrink: 0; background: #18161c; border-bottom: 1px solid #332f38; display: flex; align-items: center; justify-content: space-between; padding: 0 1rem; font-size: 0.78rem; overflow-x: auto; white-space: nowrap; scrollbar-width: none; gap: 0.8rem; }
+        .subbar-path::-webkit-scrollbar { display: none; }
+        .breadcrumbs { display: flex; align-items: center; gap: 0.35rem; }
+        .bc-item { padding: 0.18rem 0.5rem; border-radius: 6px; color: #cac4d0; font-weight: 500; text-decoration: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background 0.15s ease, color 0.15s ease; }
+        .bc-item:hover { background: #2b2930; color: #ffffff; }
+        .bc-item.active { background: #4f378b; color: #eaddff; font-weight: 700; }
+        .bc-sep { color: #938f99; font-size: 0.75rem; }
+        .original-path-badge { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.74rem; color: #d0bcff; background: #211f26; padding: 0.2rem 0.6rem; border-radius: 6px; border: 1px solid #4f378b; text-decoration: none; flex-shrink: 0; transition: all 0.15s ease; }
+        .original-path-badge:hover { background: #4f378b; color: #ffffff; }
+        .original-path-badge code { font-family: monospace; font-weight: 600; color: inherit; }
+        .btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.85rem; border-radius: 20px; font-size: 0.78rem; font-weight: 600; text-decoration: none; border: none; cursor: pointer; transition: opacity 0.15s; }
+        .btn-primary { background: #d0bcff; color: #381e72; }
+        .btn-secondary { background: #4a4458; color: #e8def8; }
+        .btn:hover { opacity: 0.9; }
+        .viewer-wrap { flex: 1; min-height: 0; height: calc(100dvh - 88px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0.75rem; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; }
+        .media-img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+        .media-video { max-width: 100%; max-height: 100%; width: auto; height: auto; border-radius: 10px; background: #000; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+        .audio-card { background: #211f26; border: 1px solid #49454f; border-radius: 20px; padding: 1.5rem; width: 100%; max-width: 380px; max-height: 100%; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 0.8rem; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+        .doc-box { width: 100%; max-width: 960px; height: 100%; background: #1d1b20; border: 1px solid #49454f; border-radius: 10px; padding: 1.25rem; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-y: auto; }
+        .pdf-frame { width: 100%; max-width: 1000px; height: 100%; border: none; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+        .grid-wrap { width: 100%; max-width: 1200px; height: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); grid-auto-rows: min-content; gap: 0.65rem; overflow-y: auto; align-content: start; padding: 0.25rem; }
+        .card-item { background: #1d1b20; border: 1px solid #49454f; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; text-decoration: none; color: inherit; transition: transform 0.15s, border-color 0.15s; }
+        .card-item:hover { transform: translateY(-2px); border-color: #d0bcff; }
+        .card-thumb { aspect-ratio: 1/1; width: 100%; background: #0f0d13; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .card-title { padding: 0.45rem; font-size: 0.76rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="topbar">
+        <div class="topbar-title">
+          <span><?= htmlspecialchars($itemName) ?></span>
+        </div>
+        <div class="topbar-actions">
+          <?php if (!$isCurrentDir): ?>
+            <a href="<?= $rawUrl ?>" target="_blank" class="btn btn-secondary">Open Raw</a>
+          <?php endif; ?>
+          <a href="<?= $downloadUrl ?>" class="btn btn-primary"><?= $isCurrentDir ? 'Download ZIP' : 'Download' ?></a>
+        </div>
+      </div>
+
+      <div class="subbar-path">
+        <div class="breadcrumbs">
+          <?php foreach ($breadcrumbs as $bc): ?>
+            <?php if ($bc['active']): ?>
+              <span class="bc-item active"><?= htmlspecialchars($bc['name']) ?></span>
+            <?php else: ?>
+              <a href="<?= $bc['url'] ?>" class="bc-item"><?= htmlspecialchars($bc['name']) ?></a>
+              <span class="bc-sep">/</span>
+            <?php endif; ?>
+          <?php endforeach; ?>
+        </div>
+        <a href="<?= htmlspecialchars($origAppUrl) ?>" class="original-path-badge" title="Click to view original location in app">
+          <span>Original:</span>
+          <code>/<?= htmlspecialchars($fullOriginalPath) ?></code>
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+        </a>
+      </div>
+
+      <div class="viewer-wrap">
+        <?php if ($isCurrentDir): ?>
+          <div class="grid-wrap">
+            <?php
+            $scanned = @scandir($targetPath) ?: [];
+            foreach ($scanned as $item) {
+              if ($item === '.' || $item === '..' || $item[0] === '.') continue;
+              $itemFull = $targetPath . DIRECTORY_SEPARATOR . $item;
+              $itemIsDir = is_dir($itemFull);
+              $itemRel = $reqSub ? ($reqSub . '/' . $item) : $item;
+              $itemExt = strtolower(pathinfo($item, PATHINFO_EXTENSION));
+              $itemType = getFileType($itemExt, $config);
+              $itemUrl = $currentScript . "?share=" . urlencode($token) . "&file=" . urlencode($itemRel);
+              $thumbUrl = $currentScript . "?share=" . urlencode($token) . "&thumb=1&file=" . urlencode($itemRel);
+              ?>
+              <a href="<?= $itemUrl ?>" class="card-item">
+                <div class="card-thumb">
+                  <?php if ($itemIsDir): ?>
+                    <span style="font-size:2rem; color:#f59e0b;">📁</span>
+                  <?php elseif ($itemType === 'image'): ?>
+                    <img src="<?= $thumbUrl ?>" alt="<?= htmlspecialchars($item) ?>" loading="lazy">
+                  <?php elseif ($itemType === 'video'): ?>
+                    <span style="font-size:2rem; color:#a8c7fa;">🎬</span>
+                  <?php elseif ($itemType === 'audio'): ?>
+                    <span style="font-size:2rem; color:#f2b8b5;">🎵</span>
+                  <?php else: ?>
+                    <span style="font-size:2rem; color:#80cbc4;">📄</span>
+                  <?php endif; ?>
+                </div>
+                <div class="card-title"><?= htmlspecialchars($item) ?></div>
+              </a>
+            <?php } ?>
+          </div>
+        <?php elseif ($fileType === 'image'): ?>
+          <img src="<?= $rawUrl ?>" class="media-img" alt="<?= htmlspecialchars($itemName) ?>">
+        <?php elseif ($fileType === 'video'): ?>
+          <video src="<?= $rawUrl ?>" class="media-video" controls autoplay playsinline></video>
+        <?php elseif ($fileType === 'audio'): ?>
+          <div class="audio-card">
+            <div style="font-size:3rem;">🎵</div>
+            <div style="font-weight:700; font-size:1rem; word-break:break-all;"><?= htmlspecialchars($itemName) ?></div>
+            <audio src="<?= $rawUrl ?>" controls autoplay style="width:100%;"></audio>
+          </div>
+        <?php elseif ($ext === 'pdf'): ?>
+          <iframe src="<?= $rawUrl ?>" class="pdf-frame"></iframe>
+        <?php elseif ($fileType === 'text' && filesize($targetPath) < 5000000): ?>
+          <div class="doc-box"><?= htmlspecialchars(@file_get_contents($targetPath) ?: '') ?></div>
+        <?php else: ?>
+          <div style="text-align:center;">
+            <div style="font-size:3.5rem; margin-bottom:0.8rem;">📦</div>
+            <div style="font-size:1.1rem; font-weight:700; margin-bottom:0.4rem;"><?= htmlspecialchars($itemName) ?></div>
+            <p style="color:#aaa; margin-bottom:1.2rem; font-size:0.85rem;"><?= formatBytes(filesize($targetPath)) ?></p>
+            <a href="<?= $downloadUrl ?>" class="btn btn-primary" style="padding:0.55rem 1.3rem;">Download File</a>
+          </div>
+        <?php endif; ?>
+      </div>
+    </body>
+  </html>
+  <?php
+  exit;
+}
+
 $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 $isAdmin = !$config['auth_enabled'] || !empty($_SESSION['authenticated']);
 $isDemo = $config['auth_enabled'] && !$isAdmin;
@@ -1869,12 +2140,13 @@ if ($action) {
 
   if ($action === 'share_create') {
     $file = safePath($config['root_dir'], $_POST['f'] ?? '');
-    if (!$file || !is_file($file)) jsonResponse(['error' => 'File not found'], 404);
+    if (!$file || !file_exists($file)) jsonResponse(['error' => 'Target not found'], 404);
 
     $token = bin2hex(random_bytes(16));
     $meta = getDriveMeta($config['meta_file']);
     $meta['shares'][$token] = [
       'rel'     => ltrim(str_replace(['\\', '//'], '/', substr(realpath($file), strlen(realpath($config['root_dir'])))), '/'),
+      'is_dir'  => is_dir($file),
       'created' => time()
     ];
     saveDriveMeta($config['meta_file'], $meta);
@@ -6437,31 +6709,10 @@ if ($action) {
             }
           } else {
             this.body.innerHTML = `
-              <svg class="m3-spinner lb-spinner active" id="lb-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-              <img class="lightbox-media" id="lb-img" src="" alt="${fileName}" style="opacity:0;">
+              <img class="lightbox-media" id="lb-img" src="${rawUrl}" alt="${fileName}">
               ${navPrev}
               ${navNext}
             `;
-
-            const img = document.getElementById('lb-img');
-            const spinner = document.getElementById('lb-spinner');
-            const preloader = new Image();
-            preloader.onload = () => {
-              if (!this.mediaList[this.currentIndex] || this.mediaList[this.currentIndex].path !== item.path) return;
-              if (spinner) spinner.classList.remove('active');
-              if (img) {
-                img.src = rawUrl;
-                img.style.opacity = '1';
-              }
-            };
-            preloader.onerror = () => {
-              if (spinner) spinner.classList.remove('active');
-              if (img) {
-                img.src = rawUrl;
-                img.style.opacity = '1';
-              }
-            };
-            preloader.src = rawUrl;
           }
 
           const btnPrev = document.getElementById('lb-prev');
@@ -9486,6 +9737,7 @@ if ($action) {
           if (type === 'folder') {
             addItem('<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>', 'Preview / Open', () => this.navigate(path));
             addItem('<svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>', 'Open in a new tab', () => this.openInNewTab(path, 'folder'));
+            addItem('<svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>', 'Public Folder Link', () => this.createShareLink(path));
             addItem('<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Download', () => this.downloadZipWithProgress(`?action=download_zip&dir=${encodeURIComponent(path)}`, null, `${name}.zip`));
             addItem('<svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>', 'Compress to ZIP', () => {
               this.showInputModal('Compress Folder', 'Archive Filename (.zip)', `${name}.zip`, (zipName) => {
