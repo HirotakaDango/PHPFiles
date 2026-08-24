@@ -5562,9 +5562,24 @@ if ($action) {
         <?php endif; ?>
       <?php endif; ?>
       <div class="dm-sep" id="mobile-cols-sep"></div>
-      <div class="slider-container" id="mobile-cols-container">
-        <div class="slider-header"><span>Grid Columns</span><span id="slider-cols-val">Auto</span></div>
-        <input type="range" class="slider-input" id="slider-cols" min="0" max="8" value="0">
+      <div id="mobile-grid-adjust-container">
+        <div class="slider-container" id="mobile-cols-container" style="padding: 0.35rem 0.8rem;">
+          <div class="slider-header"><span>Grid Columns</span><span id="slider-cols-val-mob">Auto</span></div>
+          <input type="range" class="slider-input" id="slider-cols-mob" min="0" max="8" value="0">
+        </div>
+        <div class="slider-container" style="padding: 0.35rem 0.8rem;">
+          <div class="slider-header"><span>Item Gap</span><span id="slider-gap-val-mob">12px</span></div>
+          <input type="range" class="slider-input" id="slider-gap-mob" min="2" max="36" value="12">
+        </div>
+        <div class="slider-container" style="padding: 0.35rem 0.8rem;">
+          <div class="slider-header"><span>Border Radius</span><span id="slider-radius-val-mob">14px</span></div>
+          <input type="range" class="slider-input" id="slider-radius-mob" min="0" max="32" value="14">
+        </div>
+        <div class="dm-sep" style="margin: 0.4rem 0;"></div>
+        <button type="button" class="dm-item" id="btn-reset-grid-adjust-mob" style="width: 100%; padding: 0.45rem 0.6rem; border-radius: 10px; font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant); justify-content: center; gap: 0.4rem;">
+          <svg viewBox="0 0 24 24" style="width: 15px; height: 15px;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          <span>Reset Layout Defaults</span>
+        </button>
       </div>
     </div>
   
@@ -7038,6 +7053,13 @@ if ($action) {
           this.sliderGapVal = document.getElementById('slider-gap-val');
           this.sliderRadius = document.getElementById('slider-radius');
           this.sliderRadiusVal = document.getElementById('slider-radius-val');
+          this.sliderColsMob = document.getElementById('slider-cols-mob');
+          this.sliderColsValMob = document.getElementById('slider-cols-val-mob');
+          this.sliderGapMob = document.getElementById('slider-gap-mob');
+          this.sliderGapValMob = document.getElementById('slider-gap-val-mob');
+          this.sliderRadiusMob = document.getElementById('slider-radius-mob');
+          this.sliderRadiusValMob = document.getElementById('slider-radius-val-mob');
+          this.btnResetGridAdjustMob = document.getElementById('btn-reset-grid-adjust-mob');
           this.scrollTrigger = document.getElementById('infinite-scroll-trigger');
         }
   
@@ -7441,22 +7463,48 @@ if ($action) {
             });
           }
 
+          const handleResetLayout = (e) => {
+            if (e) e.stopPropagation();
+            this.gridCols = 0;
+            this.gridGap = 12;
+            this.gridRadius = 14;
+            localStorage.removeItem('pg_grid_cols');
+            localStorage.removeItem('pg_grid_gap');
+            localStorage.removeItem('pg_grid_radius');
+
+            this.applyGridSizing();
+            this.toast('Layout reset to default');
+          };
+
           if (this.btnResetGridAdjust) {
-            this.btnResetGridAdjust.addEventListener('click', (e) => {
-              e.stopPropagation();
-              this.gridCols = 0;
-              this.gridGap = 12;
-              this.gridRadius = 14;
-              localStorage.removeItem('pg_grid_cols');
-              localStorage.removeItem('pg_grid_gap');
-              localStorage.removeItem('pg_grid_radius');
+            this.btnResetGridAdjust.addEventListener('click', handleResetLayout);
+          }
 
-              if (this.sliderCols) this.sliderCols.value = 0;
-              if (this.sliderGap) this.sliderGap.value = 12;
-              if (this.sliderRadius) this.sliderRadius.value = 14;
+          if (this.btnResetGridAdjustMob) {
+            this.btnResetGridAdjustMob.addEventListener('click', handleResetLayout);
+          }
 
+          if (this.sliderColsMob) {
+            this.sliderColsMob.addEventListener('input', (e) => {
+              this.gridCols = parseInt(e.target.value);
+              localStorage.setItem('pg_grid_cols', this.gridCols);
               this.applyGridSizing();
-              this.toast('Layout reset to default');
+            });
+          }
+
+          if (this.sliderGapMob) {
+            this.sliderGapMob.addEventListener('input', (e) => {
+              this.gridGap = parseInt(e.target.value);
+              localStorage.setItem('pg_grid_gap', this.gridGap);
+              this.applyGridSizing();
+            });
+          }
+
+          if (this.sliderRadiusMob) {
+            this.sliderRadiusMob.addEventListener('input', (e) => {
+              this.gridRadius = parseInt(e.target.value);
+              localStorage.setItem('pg_grid_radius', this.gridRadius);
+              this.applyGridSizing();
             });
           }
   
@@ -7726,10 +7774,25 @@ if ($action) {
             btnGridAdjust.style.display = (isTrash || isActivity) ? 'none' : 'flex';
           }
 
-          // In List Layout, hide the Columns adjustment slider
+          // In List Layout, hide the Columns adjustment slider (Desktop & Mobile)
           const colsSliderContainer = document.getElementById('slider-cols')?.closest('.slider-container');
           if (colsSliderContainer) {
             colsSliderContainer.style.display = (this.layout === 'list') ? 'none' : 'flex';
+          }
+
+          const mobColsContainer = document.getElementById('mobile-cols-container');
+          if (mobColsContainer) {
+            mobColsContainer.style.display = (this.layout === 'list') ? 'none' : 'flex';
+          }
+
+          // Hide mobile grid adjustments completely in Trash & Activity
+          const mobAdjustContainer = document.getElementById('mobile-grid-adjust-container');
+          const mobColsSep = document.getElementById('mobile-cols-sep');
+          if (mobAdjustContainer) {
+            mobAdjustContainer.style.display = (isTrash || isActivity) ? 'none' : 'block';
+          }
+          if (mobColsSep) {
+            mobColsSep.style.display = (isTrash || isActivity) ? 'none' : 'block';
           }
 
           // Hide Manga Mode in Trash, Activity, Starred & Recents
@@ -7775,6 +7838,18 @@ if ($action) {
           if (this.sliderColsVal) this.sliderColsVal.innerText = text;
           if (this.sliderGapVal) this.sliderGapVal.innerText = `${this.gridGap}px`;
           if (this.sliderRadiusVal) this.sliderRadiusVal.innerText = `${this.gridRadius}px`;
+
+          if (this.sliderCols) this.sliderCols.value = this.gridCols;
+          if (this.sliderGap) this.sliderGap.value = this.gridGap;
+          if (this.sliderRadius) this.sliderRadius.value = this.gridRadius;
+
+          if (this.sliderColsMob) this.sliderColsMob.value = this.gridCols;
+          if (this.sliderGapMob) this.sliderGapMob.value = this.gridGap;
+          if (this.sliderRadiusMob) this.sliderRadiusMob.value = this.gridRadius;
+
+          if (this.sliderColsValMob) this.sliderColsValMob.innerText = text;
+          if (this.sliderGapValMob) this.sliderGapValMob.innerText = `${this.gridGap}px`;
+          if (this.sliderRadiusValMob) this.sliderRadiusValMob.innerText = `${this.gridRadius}px`;
 
           // Apply directly on container element style for immediate scoped rendering
           if (this.container) {
