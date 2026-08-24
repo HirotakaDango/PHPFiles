@@ -7907,14 +7907,7 @@ if ($action) {
           window.addEventListener('hashchange', () => this.handleHashChange());
   
           if (this.btnSort) {
-            this.btnSort.addEventListener('click', (e) => {
-              e.stopPropagation();
-              const rect = e.currentTarget.getBoundingClientRect();
-              this.dropdownSort.style.top = `${rect.bottom + 8}px`;
-              this.dropdownSort.style.left = `${Math.min(rect.left, window.innerWidth - 220)}px`;
-              this.dropdownSort.classList.toggle('active');
-              this.updateSortUI();
-            });
+            this.btnSort.addEventListener('click', (e) => this.openSortDropdown(e));
           }
   
           document.querySelectorAll('#dropdown-sort .dm-item').forEach(item => {
@@ -7925,7 +7918,19 @@ if ($action) {
                 localStorage.setItem('pg_sort', sortMode);
                 this.dropdownSort.classList.remove('active');
                 this.renderLimit = 25;
-                this.renderGallery();
+                if (this.currentSection === 'activity') {
+                  this.renderActivityView();
+                } else if (this.currentSection === 'trash') {
+                  this.renderTrashView();
+                } else if (this.currentSection === 'starred') {
+                  this.loadStarred();
+                } else if (this.currentSection === 'recents') {
+                  this.loadRecents();
+                } else if (this.currentSection === 'gallery') {
+                  this.loadGallery();
+                } else {
+                  this.renderGallery();
+                }
               }
             });
           });
@@ -8174,6 +8179,11 @@ if ($action) {
         }
   
         async runServerTaskWithProgress(title, act, data, callback) {
+          const scrollEl = document.getElementById('main-content');
+          if (!this.savedScrollTop && scrollEl) {
+            this.savedScrollTop = scrollEl.scrollTop;
+          }
+
           const toastId = 'task_toast_' + Date.now();
           const container = document.getElementById('toast-container');
           const el = document.createElement('div');
@@ -8686,7 +8696,7 @@ if ($action) {
           });
         }
   
-        updateSortUI() {
+        getSortLabel() {
           const labels = {
             name_asc: 'Name (A-Z)',
             name_desc: 'Name (Z-A)',
@@ -8697,8 +8707,22 @@ if ($action) {
             ext_asc: 'Extension (A-Z)',
             ext_desc: 'Extension (Z-A)'
           };
+          return labels[this.sortBy] || 'Sort';
+        }
+
+        openSortDropdown(e) {
+          e.stopPropagation();
+          const target = e.currentTarget || this.btnSort;
+          const rect = target.getBoundingClientRect();
+          this.dropdownSort.style.top = `${rect.bottom + 8}px`;
+          this.dropdownSort.style.left = `${Math.min(rect.left, window.innerWidth - 230)}px`;
+          this.dropdownSort.classList.toggle('active');
+          this.updateSortUI();
+        }
+
+        updateSortUI() {
           if (this.btnSort) {
-            this.btnSort.title = `Sort: ${labels[this.sortBy] || 'Sort Items'}`;
+            this.btnSort.title = `Sort: ${this.getSortLabel()}`;
           }
           document.querySelectorAll('#dropdown-sort .dm-item').forEach(el => {
             if (el.dataset.sort === this.sortBy) {
@@ -8722,12 +8746,13 @@ if ($action) {
           const scrollEl = document.getElementById('main-content');
           const savedScroll = (preserveScroll || this.savedScrollTop) ? (this.savedScrollTop || (scrollEl ? scrollEl.scrollTop : 0)) : 0;
           
-          // Ensure enough items are rendered immediately to accommodate the restored scroll position without collapsing
+          // Lock minimum container height so the browser layout engine never collapses scroll to top during DOM refresh
           if (savedScroll > 0) {
+            this.container.style.minHeight = (savedScroll + (scrollEl ? scrollEl.clientHeight : 800)) + 'px';
             const estRowHeight = (this.layout === 'list') ? 56 : 140;
             const cols = (this.layout === 'list') ? 1 : this.getMasonryColCount();
-            const neededRows = Math.ceil(savedScroll / estRowHeight) + 5;
-            const neededItems = neededRows * cols;
+            const neededRows = Math.ceil(savedScroll / estRowHeight) + 8;
+            const neededItems = Math.max(25, neededRows * cols);
             if (neededItems > this.renderLimit) {
               this.renderLimit = Math.min(this.filteredList.length, neededItems);
             }
@@ -8822,11 +8847,15 @@ if ($action) {
           this.appendBatch();
           this.updateBatchBar();
 
-          if (savedScroll && scrollEl) {
+          if (savedScroll > 0 && scrollEl) {
+            scrollEl.scrollTop = savedScroll;
             requestAnimationFrame(() => {
               scrollEl.scrollTop = savedScroll;
               this.savedScrollTop = 0;
+              this.container.style.minHeight = '';
             });
+          } else {
+            this.container.style.minHeight = '';
           }
         }
   
@@ -10532,6 +10561,32 @@ if ($action) {
             });
           }
 
+          // Apply selected sort criteria to activities
+          activities.sort((a, b) => {
+            const nameA = a.name || a.path || '';
+            const nameB = b.name || b.path || '';
+            if (this.sortBy === 'name_asc') {
+              return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'name_desc') {
+              return nameB.localeCompare(nameA, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'date_asc') {
+              return (a.timestamp || 0) - (b.timestamp || 0);
+            }
+            if (this.sortBy === 'ext_asc') {
+              const extA = (nameA.split('.').pop() || '').toLowerCase();
+              const extB = (nameB.split('.').pop() || '').toLowerCase();
+              return extA.localeCompare(extB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'ext_desc') {
+              const extA = (nameA.split('.').pop() || '').toLowerCase();
+              const extB = (nameB.split('.').pop() || '').toLowerCase();
+              return extB.localeCompare(extA, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            return (b.timestamp || 0) - (a.timestamp || 0);
+          });
+
           let statsHtml = `
             <div class="activity-stats-grid">
               <div class="activity-stat-card">
@@ -10582,6 +10637,13 @@ if ($action) {
           this.container.innerHTML = `
             <div class="activity-view-wrapper">
               ${statsHtml}
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:0.2rem 0.4rem;">
+                <span style="font-size:0.8rem; font-weight:700; color:var(--md-sys-color-primary); text-transform:uppercase; letter-spacing:0.5px;">Activity History (${activities.length})</span>
+                <button class="btn-primary" style="height:32px; padding:0 0.85rem; font-size:0.78rem; background:var(--md-sys-color-surface-container-low); color:var(--md-sys-color-on-surface); border:1px solid var(--md-sys-color-outline-variant);" onclick="app.openSortDropdown(event)">
+                  <svg viewBox="0 0 24 24" style="width:15px;height:15px;margin-right:4px;"><path d="M3 18h6v-2H3v2zM3 6v2h18V6H3zm0 7h12v-2H3v2z"/></svg>
+                  <span>Sort: ${this.getSortLabel()}</span>
+                </button>
+              </div>
               <div class="activity-list-container">
                 ${rowsHtml}
               </div>
@@ -10784,6 +10846,32 @@ if ($action) {
             });
           }
 
+          // Apply selected sort criteria to trash items
+          items.sort((a, b) => {
+            const nameA = a.original_name || '';
+            const nameB = b.original_name || '';
+            if (this.sortBy === 'name_asc') {
+              return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'name_desc') {
+              return nameB.localeCompare(nameA, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'date_asc') {
+              return (a.trashed_at || 0) - (b.trashed_at || 0);
+            }
+            if (this.sortBy === 'ext_asc') {
+              const extA = (nameA.split('.').pop() || '').toLowerCase();
+              const extB = (nameB.split('.').pop() || '').toLowerCase();
+              return extA.localeCompare(extB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            if (this.sortBy === 'ext_desc') {
+              const extA = (nameA.split('.').pop() || '').toLowerCase();
+              const extB = (nameB.split('.').pop() || '').toLowerCase();
+              return extB.localeCompare(extA, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            return (b.trashed_at || 0) - (a.trashed_at || 0);
+          });
+
           if (!items.length) {
             if (this.searchQuery) {
               this.container.innerHTML = `
@@ -10807,14 +10895,20 @@ if ($action) {
 
           let html = `
             <div class="trash-view-wrapper">
-              <div style="display:flex; justify-content:space-between; align-items:center; background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:16px; padding:0.75rem 1.1rem;">
+              <div style="display:flex; justify-content:space-between; align-items:center; background:var(--md-sys-color-surface-container-low); border:1px solid var(--md-sys-color-outline-variant); border-radius:16px; padding:0.75rem 1.1rem; gap:0.6rem; flex-wrap:wrap;">
                 <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; color:var(--md-sys-color-on-surface-variant);">
                   <span style="font-weight:700; color:var(--md-sys-color-on-surface); font-size:0.95rem;">${items.length}</span> item(s) in trash
                 </div>
-                <button class="btn-primary" style="background:#dc2626; height:34px; padding:0 0.95rem; font-size:0.8rem; gap:0.4rem;" onclick="app.emptyTrash()">
-                  <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                  Empty Trash
-                </button>
+                <div style="display:flex; align-items:center; gap:0.4rem;">
+                  <button class="btn-primary" style="height:34px; padding:0 0.85rem; font-size:0.8rem; background:var(--md-sys-color-surface-container-high); color:var(--md-sys-color-on-surface); border:1px solid var(--md-sys-color-outline-variant);" onclick="app.openSortDropdown(event)">
+                    <svg viewBox="0 0 24 24" style="width:15px;height:15px;margin-right:4px;"><path d="M3 18h6v-2H3v2zM3 6v2h18V6H3zm0 7h12v-2H3v2z"/></svg>
+                    <span>Sort: ${this.getSortLabel()}</span>
+                  </button>
+                  <button class="btn-primary" style="background:#dc2626; height:34px; padding:0 0.95rem; font-size:0.8rem; gap:0.4rem;" onclick="app.emptyTrash()">
+                    <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                    Empty Trash
+                  </button>
+                </div>
               </div>
               <div style="display:flex; flex-direction:column; gap:0.55rem; width:100%;">
           `;
@@ -11284,14 +11378,45 @@ if ($action) {
           }
         }
   
-        searchImageOnGoogle(path) {
-          const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
-          const directUrl = new URL('?action=raw&f=' + encodeURIComponent(path), window.location.href).href;
-          if (!isLocal) {
-            window.open(`https://lens.google.com/uploadbyurl?url=${encodeURIComponent(directUrl)}`, '_blank');
-          } else {
-            window.open('https://lens.google.com/', '_blank');
-            this.toast('Opened Google Lens (Upload or drag image to search)');
+        async searchImageOnGoogle(path) {
+          this.toast('Uploading image to Google Search...');
+          try {
+            const rawUrl = '?action=raw&f=' + encodeURIComponent(path);
+            const res = await fetch(rawUrl);
+            if (!res.ok) throw new Error('Could not read image buffer');
+            const blob = await res.blob();
+            
+            const fileName = path.split('/').pop() || 'image.jpg';
+            const file = new File([blob], fileName, { type: blob.type || 'image/jpeg' });
+            
+            // Post raw image bytes directly from browser to bypass localhost network limits
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = 'https://www.google.com/searchbyimage/upload';
+            form.enctype = 'multipart/form-data';
+            form.target = '_blank';
+            form.style.display = 'none';
+
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.name = 'encoded_image';
+
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            fileInput.files = dt.files;
+            form.appendChild(fileInput);
+
+            document.body.appendChild(form);
+            form.submit();
+            setTimeout(() => form.remove(), 1000);
+          } catch (err) {
+            const directUrl = new URL('?action=raw&f=' + encodeURIComponent(path), window.location.href).href;
+            const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+            if (!isLocal) {
+              window.open(`https://lens.google.com/uploadbyurl?url=${encodeURIComponent(directUrl)}`, '_blank');
+            } else {
+              window.open('https://lens.google.com/', '_blank');
+            }
           }
         }
 
@@ -11367,11 +11492,13 @@ if ($action) {
         }
 
         unzipItem(path, toFolder = false) {
+          const scrollEl = document.getElementById('main-content');
+          this.savedScrollTop = scrollEl ? scrollEl.scrollTop : 0;
           const baseName = path.split('/').pop().replace(/\.[^/.]+$/, '');
           const label = toFolder ? `Extracting into "${baseName}/"` : 'Extracting archive';
           this.runServerTaskWithProgress(label, 'unzip', { f: path, to_folder: toFolder ? '1' : '0' }, () => {
             this.toast(toFolder ? `Extracted into "${baseName}/"` : 'Archive extracted successfully');
-            this.refresh();
+            this.refresh(true);
           });
         }
   
@@ -11665,11 +11792,18 @@ if ($action) {
             parentDir = this.currentPath;
           }
 
-          const targetHash = parentDir ? '#/' + ltrim(parentDir, '/') : '#/';
-          if (window.location.hash !== targetHash) {
+          const scrollEl = document.getElementById('main-content');
+          if (scrollEl && !this.savedScrollTop) {
+            this.savedScrollTop = scrollEl.scrollTop;
+          }
+
+          const currentHashClean = window.location.hash.replace(/^#\/?/, '').replace(/^\/+|\/+$/g, '');
+          const targetClean = parentDir.replace(/^\/+|\/+$/g, '');
+
+          if (currentHashClean !== targetClean && activeTarget) {
+            const targetHash = parentDir ? '#/' + ltrim(parentDir, '/') : '#/';
             window.location.hash = targetHash;
           } else {
-            // Keep existing scroll position and loaded items completely intact!
             this.updateDocTitle(parentDir ? parentDir.split('/').pop() : '', (this.data.folders?.length || 0) + (this.data.files?.length || 0));
           }
         }
