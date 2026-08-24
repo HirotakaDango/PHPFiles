@@ -1,6 +1,6 @@
 # PHPFiles - Modern Single-File PHP File Manager & Media Gallery
 
-<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/f8deeff8-e89d-47c0-ba63-428dc0e9689e" />
+<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/0a36b189-1cde-4ef0-8c3f-b7e563e0117b" />
 
 **PHPFiles** is a high-performance, single-file PHP file manager, document workspace, in-app image studio, and media gallery. Built on Google Material Design 3 principles, it combines desktop-class file management with rich media streaming, client-side OPFS caching, and zero external database dependencies.
 
