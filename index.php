@@ -700,7 +700,9 @@ function streamRangeFile($path, $mime) {
   header('Content-Type: ' . $mime);
   header('Accept-Ranges: bytes');
   header('Content-Length: ' . sprintf('%.0f', $length));
-  header('Content-Disposition: inline; filename="' . basename($path) . '"');
+  $fn = basename($path);
+  $fallbackFn = preg_replace('/[^\x20-\x7e]/', '_', $fn) ?: 'file';
+  header("Content-Disposition: inline; filename=\"{$fallbackFn}\"; filename*=UTF-8''" . rawurlencode($fn));
   header('Cache-Control: public, max-age=604800, immutable');
   header('Content-Transfer-Encoding: binary');
   header('X-Content-Type-Options: nosniff');
@@ -1216,9 +1218,12 @@ if ($action) {
     $fullPath = safePath($config['root_dir'], $file);
     if (!$fullPath || !is_file($fullPath)) jsonResponse(['error' => 'File not found'], 404);
 
+    $fn = basename($fullPath);
+    $fallbackFn = preg_replace('/[^\x20-\x7e]/', '_', $fn) ?: 'file';
+
     header('Content-Description: File Transfer');
     header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="' . basename($fullPath) . '"');
+    header("Content-Disposition: attachment; filename=\"{$fallbackFn}\"; filename*=UTF-8''" . rawurlencode($fn));
     header('Expires: 0');
     header('Cache-Control: must-revalidate');
     header('Pragma: public');
@@ -1322,7 +1327,14 @@ if ($action) {
     $uploadId = preg_replace('/[^\w\-]/', '', $_POST['upload_id'] ?? '');
     $chunkIndex = intval($_POST['chunk_index'] ?? 0);
     $totalChunks = intval($_POST['total_chunks'] ?? 1);
-    $fileName = preg_replace('/[^\w\s\d\.\-_~()[\]]/', '', basename($_POST['file_name'] ?? ''));
+    
+    // Unicode-safe sanitization: strips illegal filesystem and control characters across all languages
+    $rawBaseName = basename(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $_POST['file_name'] ?? ''));
+    $fileName = trim(preg_replace('/[\x00-\x1f\x7f\/:*?"<>|\\\\]/u', '', $rawBaseName));
+    if ($fileName === '') {
+      $fileName = 'upload_' . date('Ymd_His');
+    }
+    
     $relPath = trim(str_replace(['\\', '..'], ['/', ''], $_POST['relative_path'] ?? ''), '/');
 
     if (!$uploadId || !$fileName || empty($_FILES['chunk']['tmp_name'])) {
@@ -1359,7 +1371,19 @@ if ($action) {
         }
       }
 
-      $finalDest = $destDir . DIRECTORY_SEPARATOR . $fileName;
+      // Automatically duplicate into "filename_(1).ext" if an existing file is found
+      $ext = pathinfo($fileName, PATHINFO_EXTENSION);
+      $baseName = pathinfo($fileName, PATHINFO_FILENAME);
+      $finalName = $fileName;
+      $finalDest = $destDir . DIRECTORY_SEPARATOR . $finalName;
+
+      $counter = 1;
+      while (file_exists($finalDest)) {
+        $finalName = ($ext !== '') ? "{$baseName}_({$counter}).{$ext}" : "{$baseName}_({$counter})";
+        $finalDest = $destDir . DIRECTORY_SEPARATOR . $finalName;
+        $counter++;
+      }
+
       $out = fopen($finalDest, 'wb');
       if (!$out) {
         jsonResponse(['error' => 'Cannot create destination file'], 500);
@@ -1382,7 +1406,7 @@ if ($action) {
       $uploadedRel = ltrim(str_replace(['\\', '//'], '/', substr(realpath($finalDest), strlen(realpath($config['root_dir'])))), '/');
       logDriveActivity($config['meta_file'], 'uploaded', $uploadedRel, 'Uploaded file');
 
-      jsonResponse(['success' => true, 'completed' => true, 'file' => $fileName]);
+      jsonResponse(['success' => true, 'completed' => true, 'file' => $finalName]);
     }
 
     jsonResponse(['success' => true, 'completed' => false, 'chunk' => $chunkIndex]);
@@ -2264,6 +2288,21 @@ if ($action) {
     if (!$file || !is_file($file)) jsonResponse(['error' => 'Archive not found'], 404);
 
     $destDir = dirname($file);
+    $toFolder = !empty($_POST['to_folder']) || !empty($_POST['to_subfolder']);
+    if ($toFolder) {
+      $baseArchiveName = pathinfo($file, PATHINFO_FILENAME);
+      $targetSubfolder = $destDir . DIRECTORY_SEPARATOR . $baseArchiveName;
+      $counter = 1;
+      while (file_exists($targetSubfolder)) {
+        $targetSubfolder = $destDir . DIRECTORY_SEPARATOR . "{$baseArchiveName}_({$counter})";
+        $counter++;
+      }
+      if (!is_dir($targetSubfolder)) {
+        @mkdir($targetSubfolder, 0777, true);
+      }
+      $destDir = $targetSubfolder;
+    }
+
     $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
 
     if ($ext === 'zip' && class_exists('ZipArchive')) {
@@ -2497,8 +2536,9 @@ if ($action) {
     }
     $zip->close();
 
+    $fallbackZip = preg_replace('/[^\x20-\x7e]/', '_', $zipName) ?: 'archive.zip';
     header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="' . $zipName . '"');
+    header("Content-Disposition: attachment; filename=\"{$fallbackZip}\"; filename*=UTF-8''" . rawurlencode($zipName));
     header('Content-Length: ' . filesize($tempZip));
     readfile($tempZip);
     @unlink($tempZip);
@@ -2562,8 +2602,10 @@ if ($action) {
 
     usort($imageFiles, fn($a, $b) => strnatcasecmp(basename($a), basename($b)));
 
+    $mangaDlName = ($title ?: 'manga') . '_offline.html';
+    $mangaFallback = preg_replace('/[^\x20-\x7e]/', '_', $mangaDlName) ?: 'manga_offline.html';
     header('Content-Type: text/html; charset=utf-8');
-    header('Content-Disposition: attachment; filename="' . ($title ?: 'manga') . '_offline.html"');
+    header("Content-Disposition: attachment; filename=\"{$mangaFallback}\"; filename*=UTF-8''" . rawurlencode($mangaDlName));
 
     echo "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n";
     echo "  <meta charset=\"UTF-8\">\n";
@@ -5912,6 +5954,7 @@ if ($action) {
       <div class="lightbox-header">
         <div class="lightbox-title" id="lb-title">image.jpg</div>
         <div style="display:flex; gap:0.4rem;">
+          <button class="btn-icon" id="btn-lb-search-google" title="Search Image on Google"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z"/></svg></button>
           <button class="btn-icon" id="btn-lb-edit" title="Edit Image"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
           <button class="btn-icon" id="btn-lb-details" title="Metadata"><svg viewBox="0 0 24 24"><path d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg></button>
           <button class="btn-icon" id="btn-lb-download" title="Download"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button>
@@ -6250,11 +6293,16 @@ if ($action) {
           </div>
           <button class="btn-icon modal-close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
         </div>
-        <div style="padding:0.6rem 1.4rem; background:var(--md-sys-color-surface-container-low); display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;">
+        <div style="padding:0.6rem 1.4rem; background:var(--md-sys-color-surface-container-low); display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; gap:0.5rem; flex-wrap:wrap;">
           <span id="archive-preview-stats" style="color:var(--md-sys-color-on-surface-variant);">0 files found</span>
-          <button class="btn-primary" id="archive-extract-btn" style="height:32px; padding:0 0.8rem; gap:0.35rem;">
-            <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Extract Archive
-          </button>
+          <div style="display:flex; gap:0.4rem;">
+            <button class="btn-primary" id="archive-extract-folder-btn" style="height:32px; padding:0 0.8rem; gap:0.35rem; background:var(--md-sys-color-surface-container-highest); color:var(--md-sys-color-on-surface); border:1px solid var(--md-sys-color-outline-variant);">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M20 6h-8l-2-2H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm0 12H4V8h16v10z"/></svg> Extract to Folder
+            </button>
+            <button class="btn-primary" id="archive-extract-btn" style="height:32px; padding:0 0.8rem; gap:0.35rem;">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Extract Here
+            </button>
+          </div>
         </div>
         <div class="modal-content" style="padding:0; overflow-y:auto;" id="archive-preview-body"></div>
       </div>
@@ -6982,6 +7030,11 @@ if ($action) {
             if (item) window.location.href = `?action=download&f=${encodeURIComponent(item.path)}`;
           });
 
+          document.getElementById('btn-lb-search-google')?.addEventListener('click', () => {
+            const item = this.mediaList[this.currentIndex];
+            if (item && window.app) app.searchImageOnGoogle(item.path);
+          });
+
           document.getElementById('btn-lb-edit').addEventListener('click', () => {
             const item = this.mediaList[this.currentIndex];
             if (item && item.type === 'image' && window.app) {
@@ -7071,8 +7124,14 @@ if ($action) {
           const navNext = `<div class="lightbox-nav next" id="lb-next"><svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></div>`;
 
           const ext = (fileName.split('.').pop() || '').toLowerCase();
+          const isImage = item.type === 'image' || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(ext);
           const isAudio = item.type === 'audio' || ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma', 'm4r', 'mid', 'midi'].includes(ext);
           const isVideo = item.type === 'video' || ['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi', 'ts', '3gp', 'wmv', 'flv'].includes(ext);
+
+          const btnSearchGoogle = document.getElementById('btn-lb-search-google');
+          if (btnSearchGoogle) btnSearchGoogle.style.display = isImage ? 'flex' : 'none';
+          const btnLbEdit = document.getElementById('btn-lb-edit');
+          if (btnLbEdit) btnLbEdit.style.display = isImage ? 'flex' : 'none';
 
           if (isVideo) {
             this.body.innerHTML = `
@@ -7338,7 +7397,7 @@ if ($action) {
               } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
                 this.filteredList.forEach(item => this.selectedItems.add(item.path));
-                this.renderGallery(true);
+                this.container.querySelectorAll('.file-card').forEach(c => c.classList.add('selected'));
                 this.updateBatchBar();
               } else if (e.key === 'Escape') {
                 this.clearSelection();
@@ -8319,7 +8378,6 @@ if ($action) {
           this.currentPath = path;
           this.selectedItems.clear();
           this.updateBatchBar();
-          this.renderLimit = 25;
 
           if (clearSearch) {
             this.isSearching = false;
@@ -8332,14 +8390,19 @@ if ($action) {
           this.sidebarBackdrop.classList.remove('active');
           this.updateTreeActive();
 
-          // Always display loading state first to prevent stale page conflicts or merging
-          this.container.style.opacity = '1';
-          this.container.innerHTML = `
-            <div class="center-state">
-              <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
-              <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading files...</div>
-            </div>
-          `;
+          // Only wipe container with a short spinner if navigating to a new directory without saved scroll
+          if (!this.savedScrollTop) {
+            this.renderLimit = 25;
+            this.container.style.opacity = '1';
+            this.container.innerHTML = `
+              <div class="center-state">
+                <svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg>
+                <div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading files...</div>
+              </div>
+            `;
+          } else {
+            this.container.style.opacity = '0.7';
+          }
 
           try {
             const res = await fetch(`?action=list&dir=${encodeURIComponent(path || '')}`);
@@ -8355,7 +8418,7 @@ if ($action) {
             const freshData = await res.json();
             if (seq !== this.navSeq) return;
             this.data = freshData;
-            this.renderGallery();
+            this.renderGallery(!!this.savedScrollTop);
             this.updateBreadcrumbs();
             this.updateBadges();
             const totalItems = (freshData.folders ? freshData.folders.length : 0) + (freshData.files ? freshData.files.length : 0);
@@ -8658,6 +8721,18 @@ if ($action) {
 
           const scrollEl = document.getElementById('main-content');
           const savedScroll = (preserveScroll || this.savedScrollTop) ? (this.savedScrollTop || (scrollEl ? scrollEl.scrollTop : 0)) : 0;
+          
+          // Ensure enough items are rendered immediately to accommodate the restored scroll position without collapsing
+          if (savedScroll > 0) {
+            const estRowHeight = (this.layout === 'list') ? 56 : 140;
+            const cols = (this.layout === 'list') ? 1 : this.getMasonryColCount();
+            const neededRows = Math.ceil(savedScroll / estRowHeight) + 5;
+            const neededItems = neededRows * cols;
+            if (neededItems > this.renderLimit) {
+              this.renderLimit = Math.min(this.filteredList.length, neededItems);
+            }
+          }
+
           const activeFilter = this.filter || 'all';
           let filteredFiles = (this.data.files || []).filter(f => activeFilter === 'all' || f.type === activeFilter);
           let filteredFolders = activeFilter === 'all' ? (this.data.folders || []) : [];
@@ -8766,6 +8841,7 @@ if ($action) {
             const card = document.createElement('div');
             const isSel = this.selectedItems.has(item.path);
             card.className = `file-card ${item.isDir ? 'is-folder' : 'is-file'} ${isSel ? 'selected' : ''}`;
+            card.dataset.path = item.path;
 
             const formattedDate = item.mtime ? new Date(item.mtime * 1000).toLocaleDateString(undefined, { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
             const isStarred = this.starredSet.has(item.path);
@@ -8926,34 +9002,30 @@ if ($action) {
   
         toggleSelect(e, path) {
           e.stopPropagation();
-          const scrollEl = document.getElementById('main-content');
-          const st = scrollEl ? scrollEl.scrollTop : 0;
-          if (this.selectedItems.has(path)) {
+          const isSelected = this.selectedItems.has(path);
+          if (isSelected) {
             this.selectedItems.delete(path);
           } else {
             this.selectedItems.add(path);
           }
-          if (this.isSearching) {
-            this.appendBatch();
-          } else {
-            this.renderGallery(true);
+
+          // In-place DOM update prevents destroying the gallery and preserves exact scroll
+          const card = this.container.querySelector(`.file-card[data-path="${CSS.escape(path)}"]`);
+          if (card) {
+            card.classList.toggle('selected', !isSelected);
           }
-          if (scrollEl) scrollEl.scrollTop = st;
+
+          this.updateBatchBar();
         }
   
         clearSelection() {
-          const scrollEl = document.getElementById('main-content');
-          const st = scrollEl ? scrollEl.scrollTop : 0;
           this.selectedItems.clear();
           const dbm = document.getElementById('dropdown-batch-more');
           if (dbm) dbm.classList.remove('active');
+          
+          // Instantly uncheck visible cards without wiping the DOM or resetting scroll
+          this.container.querySelectorAll('.file-card.selected').forEach(c => c.classList.remove('selected'));
           this.updateBatchBar();
-          if (this.isSearching) {
-            this.appendBatch();
-          } else {
-            this.renderGallery(true);
-          }
-          if (scrollEl) scrollEl.scrollTop = st;
         }
   
         updateBatchBar() {
@@ -10604,8 +10676,6 @@ if ($action) {
 
         toggleStarDirect(e, path) {
           e.stopPropagation();
-          const scrollEl = document.getElementById('main-content');
-          const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
           this.api('star_toggle', { path }, (res) => {
             if (res.is_starred) {
               this.starredSet.add(path);
@@ -10614,11 +10684,21 @@ if ($action) {
             }
             this.toast(res.is_starred ? 'Starred' : 'Unstarred');
             if (this.currentSection === 'starred') {
+              const scrollEl = document.getElementById('main-content');
+              this.savedScrollTop = scrollEl ? scrollEl.scrollTop : 0;
               this.loadStarred();
             } else {
-              this.renderGallery(true);
+              // Update only the star icon on the specific card in DOM without reloading
+              const starBtns = this.container.querySelectorAll(`.file-card[data-path="${CSS.escape(path)}"] .file-star-btn`);
+              const starSvg = res.is_starred
+                ? '<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>'
+                : '<svg viewBox="0 0 24 24"><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"/></svg>';
+              starBtns.forEach(btn => {
+                btn.className = `file-star-btn ${res.is_starred ? 'active' : ''}`;
+                btn.title = res.is_starred ? 'Unstar' : 'Star';
+                btn.innerHTML = starSvg;
+              });
             }
-            if (scrollEl) scrollEl.scrollTop = savedScroll;
           });
         }
 
@@ -11133,13 +11213,15 @@ if ($action) {
           } else {
             if (fileType === 'archive' || ['zip', 'rar', 'tar', 'gz', 'tgz', '7z'].includes((name.split('.').pop() || '').toLowerCase())) {
               addItem('<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>', 'Inspect Archive', () => this.previewArchive(path, name));
-              addItem('<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Extract Here', () => this.unzipItem(path));
+              addItem('<svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm0 12H4V8h16v10z"/></svg>', 'Extract to Folder', () => this.unzipItem(path, true));
+              addItem('<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Extract Here', () => this.unzipItem(path, false));
             } else {
               addItem('<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>', 'Preview / Play', () => this.openFile(path, true));
             }
             addItem('<svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>', 'Open in a new tab', () => this.openInNewTab(path, 'file'));
             addItem('<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Download', () => { window.location.href = `?action=download&f=${encodeURIComponent(path)}`; });
             if (fileType === 'image') {
+              addItem('<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z"/></svg>', 'Search on Google', () => this.searchImageOnGoogle(path));
               addItem('<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>', 'Edit Image', () => this.openImageEditor(path, name));
             }
             if (fileType !== 'archive') {
@@ -11202,6 +11284,17 @@ if ($action) {
           }
         }
   
+        searchImageOnGoogle(path) {
+          const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+          const directUrl = new URL('?action=raw&f=' + encodeURIComponent(path), window.location.href).href;
+          if (!isLocal) {
+            window.open(`https://lens.google.com/uploadbyurl?url=${encodeURIComponent(directUrl)}`, '_blank');
+          } else {
+            window.open('https://lens.google.com/', '_blank');
+            this.toast('Opened Google Lens (Upload or drag image to search)');
+          }
+        }
+
         previewArchive(path, name) {
           document.getElementById('archive-preview-title').innerText = name || 'Archive Contents';
           const body = document.getElementById('archive-preview-body');
@@ -11210,10 +11303,21 @@ if ($action) {
           body.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg></div>';
           this.showModal('modal-archive-preview');
 
-          document.getElementById('archive-extract-btn').onclick = () => {
-            this.unzipItem(path);
-            this.closeModals();
-          };
+          const btnExtractHere = document.getElementById('archive-extract-btn');
+          if (btnExtractHere) {
+            btnExtractHere.onclick = () => {
+              this.unzipItem(path, false);
+              this.closeModals();
+            };
+          }
+
+          const btnExtractFolder = document.getElementById('archive-extract-folder-btn');
+          if (btnExtractFolder) {
+            btnExtractFolder.onclick = () => {
+              this.unzipItem(path, true);
+              this.closeModals();
+            };
+          }
 
           fetch(`?action=archive_preview&f=${encodeURIComponent(path)}`)
             .then(r => r.json())
@@ -11262,9 +11366,11 @@ if ($action) {
             });
         }
 
-        unzipItem(path) {
-          this.runServerTaskWithProgress('Extracting archive', 'unzip', { f: path }, () => {
-            this.toast('Archive extracted successfully');
+        unzipItem(path, toFolder = false) {
+          const baseName = path.split('/').pop().replace(/\.[^/.]+$/, '');
+          const label = toFolder ? `Extracting into "${baseName}/"` : 'Extracting archive';
+          this.runServerTaskWithProgress(label, 'unzip', { f: path, to_folder: toFolder ? '1' : '0' }, () => {
+            this.toast(toFolder ? `Extracted into "${baseName}/"` : 'Archive extracted successfully');
             this.refresh();
           });
         }
