@@ -4218,12 +4218,12 @@ if ($action) {
         margin: auto;
         width: 48px;
         height: 48px;
-        display: none;
+        display: none !important;
         z-index: 1510;
         pointer-events: none;
       }
       .lb-spinner.active {
-        display: block;
+        display: block !important;
       }
       .lightbox-nav {
         position: absolute;
@@ -7134,14 +7134,20 @@ if ($action) {
             const preloader = new Image();
             preloader.onload = () => {
               if (!this.mediaList[this.currentIndex] || this.mediaList[this.currentIndex].path !== item.path) return;
-              if (spinner) spinner.classList.remove('active');
+              if (spinner) {
+                spinner.classList.remove('active');
+                spinner.style.display = 'none';
+              }
               if (img) {
                 img.src = rawUrl;
                 img.style.opacity = '1';
               }
             };
             preloader.onerror = () => {
-              if (spinner) spinner.classList.remove('active');
+              if (spinner) {
+                spinner.classList.remove('active');
+                spinner.style.display = 'none';
+              }
               if (img) {
                 img.src = rawUrl;
                 img.style.opacity = '1';
