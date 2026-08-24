@@ -201,6 +201,8 @@ function getExifMetadata($filePath) {
         $lon = parseGPSCoordinate($exif['GPS']['GPSLongitude'], $exif['GPS']['GPSLongitudeRef']);
         if ($lat !== null && $lon !== null) {
           $meta['exif']['GPS Coordinates'] = sprintf('%.5f, %.5f', $lat, $lon);
+          $meta['exif']['OpenStreetMap'] = "https://www.openstreetmap.org/?mlat={$lat}&mlon={$lon}#map=16/{$lat}/{$lon}";
+          $meta['exif']['OSM_Embed'] = "https://www.openstreetmap.org/export/embed.html?bbox=" . ($lon - 0.006) . "%2C" . ($lat - 0.003) . "%2C" . ($lon + 0.006) . "%2C" . ($lat + 0.003) . "&layer=mapnik&marker={$lat}%2C{$lon}";
           $meta['exif']['Maps'] = "https://www.google.com/maps?q={$lat},{$lon}";
         }
       }
@@ -3022,15 +3024,56 @@ if ($action) {
         box-sizing: border-box;
       }
   
+      .gallery-container {
+        --grid-gap: 12px;
+        --card-radius: 14px;
+        width: 100%;
+        min-width: 0;
+        flex: 1;
+        box-sizing: border-box;
+      }
+
       .layout-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
         grid-auto-rows: min-content;
         align-content: start;
-        gap: 0.75rem;
+        gap: var(--grid-gap, 12px) !important;
         width: 100%;
         min-width: 0;
         box-sizing: border-box;
+      }
+
+      .layout-justified {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--grid-gap, 12px) !important;
+        align-content: flex-start;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .layout-columns {
+        display: flex;
+        gap: var(--grid-gap, 12px) !important;
+        align-items: flex-start;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .masonry-col {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--grid-gap, 12px) !important;
+        box-sizing: border-box;
+      }
+
+      .layout-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--grid-gap, 8px) !important;
       }
       .layout-grid[data-cols="1"] { grid-template-columns: repeat(1, minmax(0, 1fr)); }
       .layout-grid[data-cols="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3062,7 +3105,7 @@ if ($action) {
       .file-card {
         background: var(--md-sys-color-surface-container-low);
         border: 1px solid var(--md-sys-color-outline-variant);
-        border-radius: 14px;
+        border-radius: var(--card-radius, 14px);
         overflow: hidden;
         display: flex;
         flex-direction: column;
@@ -3084,6 +3127,70 @@ if ($action) {
         border-color: var(--md-sys-color-primary);
         background: var(--md-sys-color-surface-container-high);
         box-shadow: 0 0 0 2px var(--md-sys-color-primary);
+      }
+
+      .file-card.drag-over-folder {
+        border: 2px dashed var(--md-sys-color-primary) !important;
+        transform: scale(1.04);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        z-index: 15;
+      }
+
+      .folder-drop-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(20, 18, 24, 0.94);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border-radius: inherit;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 0.6rem;
+        text-align: center;
+        gap: 0.4rem;
+        z-index: 25;
+        pointer-events: none;
+      }
+
+      .file-card.drag-over-folder .folder-drop-overlay {
+        display: flex;
+      }
+
+      .folder-drop-overlay svg {
+        width: 32px;
+        height: 32px;
+        fill: var(--md-sys-color-primary);
+        animation: drop-pulse 0.9s infinite alternate ease-in-out;
+      }
+
+      .folder-drop-overlay span {
+        font-size: 0.76rem;
+        font-weight: 700;
+        color: #ffffff;
+        word-break: break-word;
+        line-height: 1.2;
+      }
+
+      @keyframes drop-pulse {
+        from { transform: translateY(-3px); }
+        to { transform: translateY(3px); }
+      }
+
+      .file-card.drag-over-folder {
+        border: 2px dashed var(--md-sys-color-primary) !important;
+        background: rgba(208, 188, 255, 0.18) !important;
+        transform: scale(1.03);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      }
+
+      .osm-map-frame {
+        width: 100%;
+        height: 180px;
+        border: 1px solid var(--md-sys-color-outline-variant);
+        border-radius: 12px;
+        margin-top: 0.5rem;
       }
   
       .file-thumb {
@@ -5131,20 +5238,65 @@ if ($action) {
   
       .dropzone-overlay {
         position: fixed;
-        inset: 0;
-        background: rgba(103, 80, 164, 0.2);
-        border: 3px dashed var(--md-sys-color-primary);
+        inset: 12px;
+        background: rgba(15, 13, 19, 0.65);
+        border: 2px dashed var(--md-sys-color-primary);
+        border-radius: 24px;
         backdrop-filter: blur(4px);
-        z-index: 9000;
+        -webkit-backdrop-filter: blur(4px);
+        z-index: 8000;
         display: none;
         align-items: center;
         justify-content: center;
-        font-size: 1.3rem;
+        font-size: 1.15rem;
         font-weight: 700;
         color: var(--md-sys-color-primary);
         pointer-events: none;
+        box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35);
       }
       .dropzone-overlay.active { display: flex; }
+
+      .folder-drop-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 13, 19, 0.94);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: 2px dashed var(--md-sys-color-primary);
+        border-radius: inherit;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 0.6rem;
+        text-align: center;
+        gap: 0.35rem;
+        z-index: 30;
+        pointer-events: none;
+      }
+
+      .file-card.drag-over-folder .folder-drop-overlay {
+        display: flex;
+      }
+
+      .folder-drop-overlay svg {
+        width: 30px;
+        height: 30px;
+        fill: var(--md-sys-color-primary);
+        animation: drop-bounce 0.8s infinite alternate ease-in-out;
+      }
+
+      .folder-drop-overlay span {
+        font-size: 0.74rem;
+        font-weight: 700;
+        color: #ffffff;
+        line-height: 1.25;
+      }
+
+      @keyframes drop-bounce {
+        from { transform: translateY(-3px); }
+        to { transform: translateY(3px); }
+      }
   
       .bottom-pad {
         height: calc(5.5rem + env(safe-area-inset-bottom, 0px));
@@ -5225,11 +5377,9 @@ if ($action) {
   
       <div class="topbar-right">
         <div class="desktop-only" style="display:flex; align-items:center; gap:0.5rem;">
-          <div id="desk-cols-container" style="display:flex; align-items:center; gap:0.4rem; padding:0 0.6rem; background:var(--md-sys-color-surface-container-high); border-radius:20px; height:40px;">
-            <span style="font-size:0.75rem; font-weight:600; color:var(--md-sys-color-on-surface-variant);">Cols:</span>
-            <input type="range" id="slider-cols-desk" class="slider-input" min="0" max="8" value="0" style="width:70px;">
-            <span id="slider-cols-desk-val" style="font-size:0.75rem; font-weight:600; min-width:28px;">Auto</span>
-          </div>
+          <button class="btn-icon" id="btn-grid-adjust" title="Grid, Gap & Radius Settings">
+            <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+          </button>
           <button class="btn-icon" id="btn-clear-cache-desk" title="Clear Cache">
             <svg viewBox="0 0 24 24"><path d="M15 16h4v2h-4zm0-8h7v2h-7zm0 4h6v2h-6zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/></svg>
           </button>
@@ -5365,6 +5515,34 @@ if ($action) {
       <div class="dm-item" id="du-upload-files"><svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg> Upload Files</div>
       <div class="dm-item" id="du-upload-folder"><svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg> Upload Folder</div>
       <div class="dm-item" id="du-upload-url"><svg viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg> Upload from URL</div>
+    </div>
+
+    <!-- Layout & Visual Adjustments Dropdown (Columns, Gap, Radius & Reset) -->
+    <div class="dropdown-menu" id="dropdown-grid-adjust" style="min-width: 250px; padding: 0.75rem 0.9rem;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <span style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--md-sys-color-primary); letter-spacing: 0.6px;">Grid & Appearance</span>
+      </div>
+      
+      <div class="slider-container" style="padding: 0.35rem 0;">
+        <div class="slider-header"><span>Columns</span><span id="slider-cols-val">Auto</span></div>
+        <input type="range" class="slider-input" id="slider-cols" min="0" max="8" value="0">
+      </div>
+
+      <div class="slider-container" style="padding: 0.35rem 0;">
+        <div class="slider-header"><span>Item Gap</span><span id="slider-gap-val">12px</span></div>
+        <input type="range" class="slider-input" id="slider-gap" min="2" max="36" value="12">
+      </div>
+
+      <div class="slider-container" style="padding: 0.35rem 0;">
+        <div class="slider-header"><span>Border Radius</span><span id="slider-radius-val">14px</span></div>
+        <input type="range" class="slider-input" id="slider-radius" min="0" max="32" value="14">
+      </div>
+
+      <div class="dm-sep" style="margin: 0.5rem 0;"></div>
+      <button type="button" class="dm-item" id="btn-reset-grid-adjust" style="width: 100%; padding: 0.45rem 0.6rem; border-radius: 10px; font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant); justify-content: center; gap: 0.4rem;">
+        <svg viewBox="0 0 24 24" style="width: 15px; height: 15px;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        <span>Reset to Defaults</span>
+      </button>
     </div>
 
     <div class="dropdown-menu" id="dropdown-more">
@@ -6009,6 +6187,9 @@ if ($action) {
           <button class="img-editor-nav-btn" data-ietab="tab-text">
             <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M5 4v3h5.5v12h3V7H19V4H5z"/></svg> Freeform Text
           </button>
+          <button class="img-editor-nav-btn" data-ietab="tab-draw">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg> Free Drawing
+          </button>
           <button class="btn-icon" id="ie-global-reset" title="Reset to Original" style="margin-left:auto; width:30px; height:30px;">
             <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
           </button>
@@ -6065,6 +6246,21 @@ if ($action) {
           </label>
           <button class="btn-primary" id="ie-add-text-btn" style="height:30px; padding:0 0.8rem; font-size:0.75rem;">Stamp Text</button>
           <span style="font-size:0.72rem; color:var(--md-sys-color-outline); margin-left:auto;">💡 Click/drag canvas to position text</span>
+        </div>
+
+        <!-- Freehand Drawing Subbar -->
+        <div class="img-editor-subbar" id="ietab-tab-draw" style="display:none;">
+          <div style="display:flex; align-items:center; gap:0.35rem;">
+            <span>Size:</span>
+            <input type="range" class="slider-input" id="ie-draw-size" min="1" max="50" value="6" style="width:70px;">
+            <span id="ie-draw-size-val" style="font-size:0.75rem; min-width:24px;">6px</span>
+          </div>
+          <input type="color" id="ie-draw-color" value="#ff0000" title="Brush Color" style="width:28px; height:28px; border:none; background:transparent; cursor:pointer;">
+          <label style="display:flex; align-items:center; gap:0.3rem; cursor:pointer; font-size:0.75rem;">
+            <input type="checkbox" id="ie-draw-eraser"><span>Eraser</span>
+          </label>
+          <button class="btn-primary" id="ie-draw-clear-btn" style="height:30px; padding:0 0.75rem; font-size:0.75rem; background:transparent; border:1px solid var(--md-sys-color-outline-variant);">Clear Drawing</button>
+          <span style="font-size:0.72rem; color:var(--md-sys-color-outline); margin-left:auto;">✏️ Draw directly on the canvas</span>
         </div>
 
         <div class="img-editor-canvas-wrap">
@@ -6792,6 +6988,8 @@ if ($action) {
           this.layout = localStorage.getItem('pg_layout') || 'grid';
           this.theme = localStorage.getItem('pg_theme') || 'dark';
           this.gridCols = parseInt(localStorage.getItem('pg_grid_cols')) || 0;
+          this.gridGap = parseInt(localStorage.getItem('pg_grid_gap')) || 12;
+          this.gridRadius = parseInt(localStorage.getItem('pg_grid_radius')) || 14;
           this.renderLimit = 25;
           this.filteredList = [];
           this.searchDebounceTimer = null;
@@ -6831,10 +7029,15 @@ if ($action) {
           this.dropdownMore = document.getElementById('dropdown-more');
           this.dropdownSort = document.getElementById('dropdown-sort');
           this.btnSort = document.getElementById('btn-sort');
+          this.dropdownGridAdjust = document.getElementById('dropdown-grid-adjust');
+          this.btnGridAdjust = document.getElementById('btn-grid-adjust');
+          this.btnResetGridAdjust = document.getElementById('btn-reset-grid-adjust');
           this.sliderCols = document.getElementById('slider-cols');
           this.sliderColsVal = document.getElementById('slider-cols-val');
-          this.sliderColsDesk = document.getElementById('slider-cols-desk');
-          this.sliderColsDeskVal = document.getElementById('slider-cols-desk-val');
+          this.sliderGap = document.getElementById('slider-gap');
+          this.sliderGapVal = document.getElementById('slider-gap-val');
+          this.sliderRadius = document.getElementById('slider-radius');
+          this.sliderRadiusVal = document.getElementById('slider-radius-val');
           this.scrollTrigger = document.getElementById('infinite-scroll-trigger');
         }
   
@@ -7199,36 +7402,88 @@ if ($action) {
           };
           document.getElementById('btn-more-menu').addEventListener('click', toggleMoreMenu);
   
-          const handleColChange = (val) => {
-            this.gridCols = parseInt(val);
-            localStorage.setItem('pg_grid_cols', this.gridCols);
-            if (this.sliderCols) this.sliderCols.value = this.gridCols;
-            if (this.sliderColsDesk) this.sliderColsDesk.value = this.gridCols;
-            this.applyGridSizing();
-          };
-  
+          // Toggle Minified Grid & Appearance Adjustments Dropdown
+          if (this.btnGridAdjust && this.dropdownGridAdjust) {
+            this.btnGridAdjust.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const rect = this.btnGridAdjust.getBoundingClientRect();
+              this.dropdownGridAdjust.style.top = `${rect.bottom + 8}px`;
+              this.dropdownGridAdjust.style.right = `${window.innerWidth - rect.right}px`;
+              this.dropdownGridAdjust.classList.toggle('active');
+            });
+            this.dropdownGridAdjust.addEventListener('click', (e) => e.stopPropagation());
+          }
+
           if (this.sliderCols) {
             this.sliderCols.value = this.gridCols;
-            this.sliderCols.addEventListener('input', (e) => handleColChange(e.target.value));
+            this.sliderCols.addEventListener('input', (e) => {
+              this.gridCols = parseInt(e.target.value);
+              localStorage.setItem('pg_grid_cols', this.gridCols);
+              this.applyGridSizing();
+            });
+          }
+
+          if (this.sliderGap) {
+            this.sliderGap.value = this.gridGap;
+            this.sliderGap.addEventListener('input', (e) => {
+              this.gridGap = parseInt(e.target.value);
+              localStorage.setItem('pg_grid_gap', this.gridGap);
+              this.applyGridSizing();
+            });
+          }
+
+          if (this.sliderRadius) {
+            this.sliderRadius.value = this.gridRadius;
+            this.sliderRadius.addEventListener('input', (e) => {
+              this.gridRadius = parseInt(e.target.value);
+              localStorage.setItem('pg_grid_radius', this.gridRadius);
+              this.applyGridSizing();
+            });
+          }
+
+          if (this.btnResetGridAdjust) {
+            this.btnResetGridAdjust.addEventListener('click', (e) => {
+              e.stopPropagation();
+              this.gridCols = 0;
+              this.gridGap = 12;
+              this.gridRadius = 14;
+              localStorage.removeItem('pg_grid_cols');
+              localStorage.removeItem('pg_grid_gap');
+              localStorage.removeItem('pg_grid_radius');
+
+              if (this.sliderCols) this.sliderCols.value = 0;
+              if (this.sliderGap) this.sliderGap.value = 12;
+              if (this.sliderRadius) this.sliderRadius.value = 14;
+
+              this.applyGridSizing();
+              this.toast('Layout reset to default');
+            });
           }
   
-          if (this.sliderColsDesk) {
-            this.sliderColsDesk.value = this.gridCols;
-            this.sliderColsDesk.addEventListener('input', (e) => handleColChange(e.target.value));
-          }
-  
-          window.addEventListener('dragover', (e) => {
+          let dragCounter = 0;
+          window.addEventListener('dragenter', (e) => {
             e.preventDefault();
-            document.getElementById('dropzone').classList.add('active');
+            dragCounter++;
+            document.getElementById('dropzone')?.classList.add('active');
           });
+
           window.addEventListener('dragleave', (e) => {
-            if (e.clientX <= 0 || e.clientY <= 0) {
-              document.getElementById('dropzone').classList.remove('active');
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) {
+              dragCounter = 0;
+              document.getElementById('dropzone')?.classList.remove('active');
             }
           });
+
+          window.addEventListener('dragover', (e) => {
+            e.preventDefault();
+          });
+
           window.addEventListener('drop', async (e) => {
             e.preventDefault();
-            document.getElementById('dropzone').classList.remove('active');
+            dragCounter = 0;
+            document.getElementById('dropzone')?.classList.remove('active');
             if (e.dataTransfer.items && e.dataTransfer.items.length) {
               const items = await this.readDropData(e.dataTransfer.items);
               if (items.length) uploadManager.enqueue(items, this.currentPath);
@@ -7335,15 +7590,18 @@ if ($action) {
             });
           });
   
-          window.addEventListener('click', () => {
+          const closeAllDropdowns = () => {
             this.contextMenu.classList.remove('active');
             this.dropdownMore.classList.remove('active');
+            this.dropdownGridAdjust?.classList.remove('active');
             if (this.dropdownSort) this.dropdownSort.classList.remove('active');
-            const du = document.getElementById('dropdown-upload');
-            if (du) du.classList.remove('active');
-            const dbm = document.getElementById('dropdown-batch-more');
-            if (dbm) dbm.classList.remove('active');
-          });
+            document.getElementById('dropdown-upload')?.classList.remove('active');
+            document.getElementById('dropdown-batch-more')?.classList.remove('active');
+          };
+
+          window.addEventListener('click', closeAllDropdowns);
+          document.getElementById('main-content')?.addEventListener('scroll', closeAllDropdowns, { passive: true });
+          document.getElementById('search-input')?.addEventListener('focus', closeAllDropdowns);
           this.dropdownMore.addEventListener('click', (e) => {
             if (e.target.closest('.dm-item')) {
               this.dropdownMore.classList.remove('active');
@@ -7462,6 +7720,18 @@ if ($action) {
             toolbar.style.display = (isTrash || isActivity) ? 'none' : 'flex';
           }
 
+          // Hide Layout Settings button in Trash & Activity
+          const btnGridAdjust = document.getElementById('btn-grid-adjust');
+          if (btnGridAdjust) {
+            btnGridAdjust.style.display = (isTrash || isActivity) ? 'none' : 'flex';
+          }
+
+          // In List Layout, hide the Columns adjustment slider
+          const colsSliderContainer = document.getElementById('slider-cols')?.closest('.slider-container');
+          if (colsSliderContainer) {
+            colsSliderContainer.style.display = (this.layout === 'list') ? 'none' : 'flex';
+          }
+
           // Hide Manga Mode in Trash, Activity, Starred & Recents
           const btnMangaDesk = document.getElementById('btn-manga-desk');
           const dmManga = document.getElementById('dm-manga');
@@ -7503,11 +7773,22 @@ if ($action) {
             this.container.removeAttribute('data-cols');
           }
           if (this.sliderColsVal) this.sliderColsVal.innerText = text;
-          if (this.sliderColsDeskVal) this.sliderColsDeskVal.innerText = text;
+          if (this.sliderGapVal) this.sliderGapVal.innerText = `${this.gridGap}px`;
+          if (this.sliderRadiusVal) this.sliderRadiusVal.innerText = `${this.gridRadius}px`;
+
+          // Apply directly on container element style for immediate scoped rendering
+          if (this.container) {
+            this.container.style.setProperty('--grid-gap', `${this.gridGap}px`);
+            this.container.style.setProperty('--card-radius', `${this.gridRadius}px`);
+          }
+          document.documentElement.style.setProperty('--grid-gap', `${this.gridGap}px`);
+          document.documentElement.style.setProperty('--card-radius', `${this.gridRadius}px`);
 
           // Row height scale mapping for Justified Masonry
           const heightMap = { 0: '200px', 1: '380px', 2: '320px', 3: '270px', 4: '220px', 5: '185px', 6: '155px', 8: '125px' };
-          this.container.style.setProperty('--justified-row-height', heightMap[this.gridCols] || '200px');
+          if (this.container) {
+            this.container.style.setProperty('--justified-row-height', heightMap[this.gridCols] || '200px');
+          }
 
           if (this.currentSection === 'activity' || this.currentSection === 'trash') {
             return;
@@ -8181,6 +8462,47 @@ if ($action) {
               card.onclick = (e) => app.handleItemClick(e, 'folder', item.path);
               card.oncontextmenu = (e) => app.showContextMenu(e, 'folder', item.path, item.name);
 
+              // Direct Folder Drag & Drop without opening the folder
+              card.ondragover = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                card.classList.add('drag-over-folder');
+              };
+              card.ondragenter = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                card.classList.add('drag-over-folder');
+              };
+              card.ondragleave = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!card.contains(e.relatedTarget)) {
+                  card.classList.remove('drag-over-folder');
+                }
+              };
+              card.ondrop = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                card.classList.remove('drag-over-folder');
+                document.getElementById('dropzone')?.classList.remove('active');
+
+                let count = 0;
+                if (e.dataTransfer.items && e.dataTransfer.items.length) {
+                  const itemsList = await app.readDropData(e.dataTransfer.items);
+                  if (itemsList.length) {
+                    count = itemsList.length;
+                    uploadManager.enqueue(itemsList, item.path);
+                  }
+                } else if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                  const itemsList = Array.from(e.dataTransfer.files).map(f => ({ file: f, relativePath: f.name }));
+                  count = itemsList.length;
+                  uploadManager.enqueue(itemsList, item.path);
+                }
+                if (count > 0) {
+                  app.toast(`Uploading ${count} item(s) directly to "${item.name}"`);
+                }
+              };
+
               if (item.thumb_image) card.classList.add('has-image');
 
               let folderThumbHtml = item.thumb_image
@@ -8198,6 +8520,10 @@ if ($action) {
                   </div>
                 </div>
                 <div class="file-star-btn ${isStarred ? 'active' : ''}" title="${isStarred ? 'Unstar' : 'Star'}">${starSvg}</div>
+                <div class="folder-drop-overlay">
+                  <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                  <span>Drop to upload into<br><strong>${this.escapeHtml(item.name)}</strong></span>
+                </div>
               `;
             } else {
               let thumbHtml = '';
@@ -8761,7 +9087,8 @@ if ($action) {
           } else if (resolvedType === 'text') {
             this.openEditor(file.path, file.name);
           } else {
-            window.location.href = `?action=download&f=${encodeURIComponent(file.path)}`;
+            // Optimize all other file extensions with in-app viewer fallback
+            this.openDocViewer(file.path, file.name);
           }
         }
 
@@ -8857,10 +9184,14 @@ if ($action) {
               }
             } else {
               container.innerHTML = `
-                <div class="center-state" style="min-height:300px;">
-                  <div style="font-weight:600; font-size:1rem; margin-bottom:0.4rem;">Unsupported Preview Format</div>
-                  <div style="font-size:0.8rem; color:var(--md-sys-color-on-surface-variant); margin-bottom:1rem;">This format can be opened in an external application.</div>
-                  <a href="${directUrl}" class="btn-primary" download style="text-decoration:none;">Download File</a>
+                <div class="center-state" style="min-height:320px;">
+                  <svg viewBox="0 0 24 24" style="width:54px; height:54px; opacity:0.35; color:var(--md-sys-color-outline); margin-bottom:0.6rem;"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                  <div style="font-weight:700; font-size:1.1rem; color:var(--md-sys-color-on-surface); margin-bottom:0.3rem;">This file can't be viewed.</div>
+                  <div style="font-size:0.82rem; color:var(--md-sys-color-on-surface-variant); margin-bottom:1.2rem;">Preview is not supported for .${ext.toUpperCase() || 'this'} files. You can download it directly.</div>
+                  <a href="${directUrl}" class="btn-primary" download style="text-decoration:none; padding:0.5rem 1.4rem; gap:0.4rem;">
+                    <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                    Download File
+                  </a>
                 </div>
               `;
             }
@@ -8903,7 +9234,15 @@ if ($action) {
             invert: false,
             cropActive: false,
             cropRatio: 'free',
-            textActive: false
+            textActive: false,
+            drawActive: false
+          };
+
+          let drawing = {
+            isDrawing: false,
+            lastX: 0,
+            lastY: 0,
+            strokes: [] // Store committed path segments
           };
 
           let crop = {
@@ -9182,6 +9521,11 @@ if ($action) {
                 freeText.dragOffsetY = 0;
               }
               redraw();
+            } else if (state.drawActive) {
+              pushSnapshot();
+              drawing.isDrawing = true;
+              drawing.lastX = pt.x;
+              drawing.lastY = pt.y;
             }
           };
 
@@ -9204,7 +9548,34 @@ if ($action) {
           };
 
           window.onmousemove = window.ontouchmove = (e) => {
-            if (state.cropActive && crop.activeHandle) {
+            if (state.drawActive && drawing.isDrawing) {
+              if (e.cancelable) e.preventDefault();
+              const pt = getCanvasPoint(e);
+              const brushSize = parseInt(document.getElementById('ie-draw-size')?.value || '6', 10);
+              const brushColor = document.getElementById('ie-draw-color')?.value || '#ff0000';
+              const isEraser = document.getElementById('ie-draw-eraser')?.checked;
+
+              ctx.save();
+              ctx.lineJoin = 'round';
+              ctx.lineCap = 'round';
+              ctx.lineWidth = brushSize;
+
+              if (isEraser) {
+                ctx.globalCompositeOperation = 'destination-out';
+              } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = brushColor;
+              }
+
+              ctx.beginPath();
+              ctx.moveTo(drawing.lastX, drawing.lastY);
+              ctx.lineTo(pt.x, pt.y);
+              ctx.stroke();
+              ctx.restore();
+
+              drawing.lastX = pt.x;
+              drawing.lastY = pt.y;
+            } else if (state.cropActive && crop.activeHandle) {
               if (e.cancelable) e.preventDefault();
               const pt = getCanvasPoint(e);
               const dx = pt.x - crop.startX;
@@ -9259,6 +9630,18 @@ if ($action) {
           window.onmouseup = window.ontouchend = () => {
             crop.activeHandle = null;
             freeText.isDragging = false;
+            if (state.drawActive && drawing.isDrawing) {
+              drawing.isDrawing = false;
+              const nextImg = new Image();
+              nextImg.crossOrigin = 'anonymous';
+              nextImg.onload = () => {
+                baseImg = nextImg;
+                state.rotation = 0;
+                state.flipH = 1;
+                state.flipV = 1;
+              };
+              nextImg.src = canvas.toDataURL('image/png');
+            }
           };
 
           baseImg.onload = () => {
@@ -9274,7 +9657,7 @@ if ($action) {
           baseImg.src = `?action=raw&f=${encodeURIComponent(path)}&t=${Date.now()}`;
 
           // Tab Navigation
-          const tabs = ['tab-transform', 'tab-crop', 'tab-adjust', 'tab-text'];
+          const tabs = ['tab-transform', 'tab-crop', 'tab-adjust', 'tab-text', 'tab-draw'];
           document.querySelectorAll('.img-editor-nav-btn').forEach(btn => {
             btn.onclick = () => {
               document.querySelectorAll('.img-editor-nav-btn').forEach(b => b.classList.remove('active'));
@@ -9286,10 +9669,26 @@ if ($action) {
               });
               state.cropActive = (target === 'tab-crop');
               state.textActive = (target === 'tab-text');
+              state.drawActive = (target === 'tab-draw');
               if (state.cropActive) initCropBounds();
               redraw();
             };
           });
+
+          // Draw Controls Binding
+          const drawSizeInput = document.getElementById('ie-draw-size');
+          const drawSizeVal = document.getElementById('ie-draw-size-val');
+          if (drawSizeInput && drawSizeVal) {
+            drawSizeInput.oninput = (e) => {
+              drawSizeVal.innerText = `${e.target.value}px`;
+            };
+          }
+
+          document.getElementById('ie-draw-clear-btn').onclick = () => {
+            pushSnapshot();
+            baseImg.src = `?action=raw&f=${encodeURIComponent(path)}&t=${Date.now()}`;
+            this.toast('Cleared drawing strokes');
+          };
 
           // Clean Undo System (Clears live text so it never gets redrawn over restored state)
           const applyHistoryState = (dataUrl) => {
@@ -10599,13 +10998,27 @@ if ($action) {
               <div class="details-section">
                 <div class="details-title">
                   <svg viewBox="0 0 24 24"><path d="M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9z"/></svg>
-                  Camera EXIF
+                  Camera EXIF & GPS Location
                 </div>
                 <div class="details-grid">
             `;
+            let osmEmbedUrl = res.exif['OSM_Embed'] || null;
             for (let k in res.exif) {
-              let val = k === 'Maps' ? `<a href="${res.exif[k]}" target="_blank" style="color:var(--md-sys-color-primary); text-decoration:underline;">Open Maps</a>` : res.exif[k];
+              if (k === 'OSM_Embed') continue;
+              let val = res.exif[k];
+              if (k === 'OpenStreetMap') {
+                val = `<a href="${res.exif[k]}" target="_blank" style="color:var(--md-sys-color-primary); font-weight:600; text-decoration:underline;">View on OpenStreetMap</a>`;
+              } else if (k === 'Maps') {
+                val = `<a href="${res.exif[k]}" target="_blank" style="color:var(--md-sys-color-primary); font-weight:600; text-decoration:underline;">Google Maps</a>`;
+              }
               html += `<div class="details-row"><span class="details-label">${k}</span><span class="details-value">${val}</span></div>`;
+            }
+            if (osmEmbedUrl) {
+              html += `
+                <div style="padding-top:0.6rem;">
+                  <iframe class="osm-map-frame" src="${osmEmbedUrl}" loading="lazy"></iframe>
+                </div>
+              `;
             }
             html += `</div></div>`;
           }
@@ -10801,9 +11214,9 @@ if ($action) {
           if (window.location.hash !== targetHash) {
             window.location.hash = targetHash;
           } else {
-            this.loadDir(parentDir, false);
+            // Keep existing scroll position and loaded items completely intact!
+            this.updateDocTitle(parentDir ? parentDir.split('/').pop() : '', (this.data.folders?.length || 0) + (this.data.files?.length || 0));
           }
-          this.updateDocTitle(parentDir ? parentDir.split('/').pop() : '', (this.data.folders?.length || 0) + (this.data.files?.length || 0));
         }
   
         showLoginModal() {
