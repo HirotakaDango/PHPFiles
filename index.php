@@ -30,6 +30,116 @@ $config = [
 
 ini_set('memory_limit', $config['memory_limit']);
 
+function ensure_getid3() {
+  $target_file = __DIR__ . '/getid3/getid3.php';
+  if (file_exists($target_file)) {
+    return true;
+  }
+
+  if (!class_exists('ZipArchive')) {
+    return false;
+  }
+
+  $urls = [
+    'james' => 'https://github.com/JamesHeinrich/getID3/archive/refs/heads/master.zip',
+    'dango' => 'https://github.com/HirotakaDango/PHP-Music/archive/refs/heads/main.zip'
+  ];
+
+  $temp_zip = __DIR__ . '/getid3_temp.zip';
+
+  $delete_folder = function ($dir) use (&$delete_folder) {
+    if (!is_dir($dir)) return;
+    $files = array_diff(scandir($dir), ['.', '..']);
+    foreach ($files as $file) {
+      (is_dir("$dir/$file")) ? $delete_folder("$dir/$file") : @unlink("$dir/$file");
+    }
+    return @rmdir($dir);
+  };
+
+  foreach ($urls as $source => $url) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    $data = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($http_code !== 200 || !$data) {
+      $context = stream_context_create([
+        'http' => ['timeout' => 60, 'follow_location' => true],
+        'ssl'  => ['verify_peer' => false, 'verify_peer_name' => false]
+      ]);
+      $data = @file_get_contents($url, false, $context);
+    }
+
+    if ($data && strlen($data) > 1000) {
+      @file_put_contents($temp_zip, $data);
+      if (file_exists($temp_zip)) {
+        $zip = new ZipArchive;
+        if ($zip->open($temp_zip) === true) {
+          $temp_extract_dir = __DIR__ . '/getid3_temp_extract';
+          if (!is_dir($temp_extract_dir)) {
+            @mkdir($temp_extract_dir, 0755, true);
+          }
+          $zip->extractTo($temp_extract_dir);
+          $zip->close();
+
+          $extracted_getid3_path = '';
+          if ($source === 'james') {
+            $extracted_getid3_path = $temp_extract_dir . '/getID3-master/getid3';
+          } else {
+            $extracted_getid3_path = $temp_extract_dir . '/PHP-Music-main/getid3';
+          }
+
+          if (is_dir($extracted_getid3_path)) {
+            $target_dir = __DIR__ . '/getid3';
+            if (!is_dir($target_dir)) {
+              @mkdir($target_dir, 0755, true);
+            }
+
+            $copy_folder = function ($src, $dst) use (&$copy_folder) {
+              $dir = opendir($src);
+              @mkdir($dst, 0755, true);
+              while (false !== ($file = readdir($dir))) {
+                if (($file != '.') && ($file != '..')) {
+                  if (is_dir($src . '/' . $file)) {
+                    $copy_folder($src . '/' . $file, $dst . '/' . $file);
+                  } else {
+                    @copy($src . '/' . $file, $dst . '/' . $file);
+                  }
+                }
+              }
+              closedir($dir);
+            };
+
+            $copy_folder($extracted_getid3_path, $target_dir);
+            $delete_folder($temp_extract_dir);
+            @unlink($temp_zip);
+
+            if (file_exists($target_file)) {
+              return true;
+            }
+          }
+          if (is_dir($temp_extract_dir)) {
+            $delete_folder($temp_extract_dir);
+          }
+        }
+        @unlink($temp_zip);
+      }
+    }
+  }
+  return false;
+}
+
+ensure_getid3();
+
+if (file_exists(__DIR__ . '/getid3/getid3.php')) {
+  require_once __DIR__ . '/getid3/getid3.php';
+}
+
 foreach ([$config['cache_dir'], $config['trash_dir'], $config['version_dir']] as $sysDir) {
   if (!is_dir($sysDir)) {
     @mkdir($sysDir, 0777, true);
@@ -115,31 +225,10 @@ function getFolderStats($dirPath, $cacheDir) {
   if (function_exists('set_time_limit')) @set_time_limit(120);
 
   $cacheReal = realpath($cacheDir);
-  $cacheFile = $cacheDir . DIRECTORY_SEPARATOR . 'fstat_' . md5($dirPath) . '.dat';
-  $currentMtime = @filemtime($dirPath) ?: 0;
-
-  if (file_exists($cacheFile)) {
-    $fp = @fopen($cacheFile, 'rb');
-    if ($fp) {
-      $header = fread($fp, 128);
-      fclose($fp);
-      if ($header) {
-        $lines = explode("\n", trim($header));
-        if (count($lines) >= 4 && intval($lines[0]) >= $currentMtime) {
-          return [
-            'size'    => floatval($lines[1]),
-            'files'   => intval($lines[2]),
-            'folders' => intval($lines[3])
-          ];
-        }
-      }
-    }
-  }
-
   $size = 0.0;
   $files = 0;
   $folders = 0;
-  $ignoreDirs = ['.gallery_cache', '.drive_trash_bin', '.file_version', '.git'];
+  $ignoreDirs = ['.gallery_cache', '.drive_trash_bin', '.file_version', '.git', 'node_modules', 'vendor'];
 
   $queue = [$dirPath];
   while (!empty($queue)) {
@@ -148,7 +237,7 @@ function getFolderStats($dirPath, $cacheDir) {
     if (!$dh) continue;
 
     while (($entry = @readdir($dh)) !== false) {
-      if ($entry === '.' || $entry === '..' || in_array($entry, $ignoreDirs) || $entry[0] === '.') {
+      if ($entry === '.' || $entry === '..' || in_array($entry, $ignoreDirs) || $entry[0] === '.' || preg_match('/\.(part|crdownload|tmp|swp)$/i', $entry)) {
         continue;
       }
       $full = $currentDir . DIRECTORY_SEPARATOR . $entry;
@@ -164,12 +253,6 @@ function getFolderStats($dirPath, $cacheDir) {
       }
     }
     @closedir($dh);
-  }
-
-  $outFp = @fopen($cacheFile, 'wb');
-  if ($outFp) {
-    fprintf($outFp, "%d\n%.0f\n%d\n%d\n", $currentMtime, $size, $files, $folders);
-    fclose($outFp);
   }
 
   return ['size' => $size, 'files' => $files, 'folders' => $folders];
@@ -246,6 +329,68 @@ function formatDuration($seconds) {
 
 function getMediaMetadata($filePath) {
   $meta = ['tags' => [], 'cover_art' => null, 'raw_cover' => null];
+  if (!file_exists($filePath)) return $meta;
+
+  // 1. Primary parser: getID3 Engine for audio and video files
+  if (class_exists('getID3')) {
+    try {
+      $getID3 = new getID3();
+      $getID3->setOption([
+        'option_md5_data'     => false,
+        'option_md5_checksum' => false,
+        'option_tags_images'  => true
+      ]);
+
+      $info = $getID3->analyze($filePath);
+
+      if (!empty($info['comments'])) {
+        if (!empty($info['comments']['title'][0])) $meta['tags']['Track Title'] = trim($info['comments']['title'][0]);
+        if (!empty($info['comments']['artist'][0])) $meta['tags']['Artist'] = trim($info['comments']['artist'][0]);
+        if (!empty($info['comments']['album'][0])) $meta['tags']['Album'] = trim($info['comments']['album'][0]);
+        if (!empty($info['comments']['year'][0])) $meta['tags']['Year'] = trim($info['comments']['year'][0]);
+        if (!empty($info['comments']['genre'][0])) $meta['tags']['Genre'] = trim($info['comments']['genre'][0]);
+      }
+
+      if (!empty($info['playtime_seconds'])) {
+        $meta['tags']['Duration'] = formatDuration($info['playtime_seconds']);
+      }
+
+      if (!empty($info['video']['resolution_x']) && !empty($info['video']['resolution_y'])) {
+        $meta['tags']['Resolution'] = $info['video']['resolution_x'] . ' × ' . $info['video']['resolution_y'] . ' px';
+      }
+
+      if (!empty($info['audio']['sample_rate'])) {
+        $meta['tags']['Sample Rate'] = number_format($info['audio']['sample_rate']) . ' Hz';
+      }
+
+      $coverData = null;
+      $mimeType = 'image/jpeg';
+
+      if (!empty($info['comments']['picture'][0]['data'])) {
+        $coverData = $info['comments']['picture'][0]['data'];
+        $mimeType = $info['comments']['picture'][0]['image_mime'] ?? 'image/jpeg';
+      } elseif (!empty($info['id3v2']['APIC'][0]['data'])) {
+        $coverData = $info['id3v2']['APIC'][0]['data'];
+        $mimeType = $info['id3v2']['APIC'][0]['mime'] ?? 'image/jpeg';
+      } elseif (!empty($info['matroska']['attachments'])) {
+        foreach ($info['matroska']['attachments'] as $att) {
+          if (stripos($att['filename'] ?? '', 'cover') !== false && !empty($att['data'])) {
+            $coverData = $att['data'];
+            $mimeType = $att['file_mime'] ?? 'image/jpeg';
+            break;
+          }
+        }
+      }
+
+      if ($coverData) {
+        $meta['raw_cover'] = $coverData;
+        $meta['cover_art'] = 'data:' . $mimeType . ';base64,' . base64_encode($coverData);
+        return $meta;
+      }
+    } catch (Exception $e) {}
+  }
+
+  // 2. Binary stream fallback
   $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
 
   if ($ext === 'mp3') {
@@ -727,12 +872,18 @@ if ($action) {
       $mtime = @filemtime($itemPath);
 
       if (is_dir($itemPath)) {
-        $subCount = count(array_diff(@scandir($itemPath) ?: [], ['.', '..', '.gallery_cache']));
+        $validItems = 0;
+        foreach (@scandir($itemPath) ?: [] as $subEntry) {
+          if ($subEntry === '.' || $subEntry === '..' || $subEntry[0] === '.' || in_array($subEntry, ['.git', '.gallery_cache', '.drive_trash_bin', '.file_version']) || preg_match('/\.(part|crdownload|tmp|swp)$/i', $subEntry)) {
+            continue;
+          }
+          $validItems++;
+        }
         $folders[] = [
           'name'        => $item,
           'path'        => $itemRel,
           'mtime'       => $mtime,
-          'items_count' => $subCount,
+          'items_count' => $validItems,
           'thumb_image' => getFolderPreviewImage($itemPath, $itemRel, $config),
         ];
       } else {
@@ -972,7 +1123,7 @@ if ($action) {
 
     if (!file_exists($cachePath)) {
       $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
-      if (in_array($ext, ['mp3', 'm4a', 'flac', 'mp4', 'mov'])) {
+      if (in_array($ext, ['mp3', 'm4a', 'flac', 'mp4', 'mov', 'mkv', 'webm', 'ogg', 'wav', 'aac', 'opus', 'avi', 'ts', 'm4v'])) {
         $mediaMeta = getMediaMetadata($fullPath);
         if (!empty($mediaMeta['raw_cover'])) {
           $tmpCover = tempnam(sys_get_temp_dir(), 'cov_');
@@ -980,6 +1131,20 @@ if ($action) {
           createThumbnail($tmpCover, $cachePath, $config['thumb_size'], $config['thumb_quality']);
           @unlink($tmpCover);
         }
+      }
+
+      // Video Frame Snapshot using server FFmpeg if available
+      if (!file_exists($cachePath) && in_array($ext, $config['video_extensions']) && function_exists('exec')) {
+        $tmpSnap = tempnam(sys_get_temp_dir(), 'vsnap_') . '.jpg';
+        @exec("ffmpeg -ss 00:00:01 -i " . escapeshellarg($fullPath) . " -vframes 1 -q:v 2 " . escapeshellarg($tmpSnap) . " 2>&1");
+        if (file_exists($tmpSnap) && filesize($tmpSnap) > 0) {
+          createThumbnail($tmpSnap, $cachePath, $config['thumb_size'], $config['thumb_quality']);
+          @unlink($tmpSnap);
+        }
+      }
+
+      if (!file_exists($cachePath) && in_array($ext, $config['image_extensions'])) {
+        createThumbnail($fullPath, $cachePath, $config['thumb_size'], $config['thumb_quality']);
       }
       if (!file_exists($cachePath)) {
         createThumbnail($fullPath, $cachePath, $config['thumb_size'], $config['thumb_quality']);
@@ -994,9 +1159,13 @@ if ($action) {
       readfile($cachePath);
     } else {
       $mime = mime_content_type($fullPath) ?: 'application/octet-stream';
-      header('Content-Type: ' . $mime);
-      header('ETag: ' . $etag);
-      readfile($fullPath);
+      if (strpos($mime, 'image/') === 0) {
+        header('Content-Type: ' . $mime);
+        header('ETag: ' . $etag);
+        readfile($fullPath);
+      } else {
+        header('HTTP/1.0 404 Not Found');
+      }
     }
     exit;
   }
@@ -3512,7 +3681,7 @@ if ($action) {
         height: auto;
         min-height: 56px;
         border: 1px solid var(--md-sys-color-outline-variant);
-        border-radius: 14px;
+        border-radius: var(--card-radius, 14px) !important;
         background: var(--md-sys-color-surface-container-low);
         box-shadow: none;
         transition: background-color 0.15s ease, border-color 0.15s ease;
@@ -5189,15 +5358,41 @@ if ($action) {
         background: var(--md-sys-color-surface-container-highest);
         outline: none;
         -webkit-appearance: none;
+        appearance: none;
         border-radius: 3px;
+        cursor: pointer;
+        transition: background 0.2s ease;
       }
       .slider-input::-webkit-slider-thumb {
         -webkit-appearance: none;
+        appearance: none;
         width: 16px;
         height: 16px;
         background: var(--md-sys-color-primary);
+        border: 2px solid var(--md-sys-color-surface);
         border-radius: 50%;
         cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        transition: transform 0.1s ease, box-shadow 0.1s ease;
+      }
+      .slider-input::-webkit-slider-thumb:hover,
+      .slider-input:active::-webkit-slider-thumb {
+        transform: scale(1.25);
+        box-shadow: 0 0 0 4px rgba(208, 188, 255, 0.25);
+      }
+      .slider-input::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        background: var(--md-sys-color-primary);
+        border: 2px solid var(--md-sys-color-surface);
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        transition: transform 0.1s ease;
+      }
+      .slider-input::-moz-range-thumb:hover,
+      .slider-input:active::-moz-range-thumb {
+        transform: scale(1.25);
       }
   
       .toast-container {
@@ -6402,7 +6597,25 @@ if ($action) {
   
         enqueue(items, targetDir) {
           if (!items || !items.length) return;
-          const newTasks = items.map((item, idx) => ({
+
+          // Deduplicate incoming files within the same target directory
+          const uniqueItems = [];
+          const seenKeys = new Set();
+
+          for (const item of items) {
+            const rel = item.relativePath || item.file.name;
+            const key = `${targetDir || ''}::${rel}`;
+            const isAlreadyQueued = this.queue.some(q => q.status === 'pending' && q.targetDir === targetDir && q.relativePath === rel);
+
+            if (!seenKeys.has(key) && !isAlreadyQueued) {
+              seenKeys.add(key);
+              uniqueItems.push(item);
+            }
+          }
+
+          if (!uniqueItems.length) return;
+
+          const newTasks = uniqueItems.map((item, idx) => ({
             id: 'up_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9) + '_' + idx,
             file: item.file,
             fileName: item.file.name,
@@ -6413,8 +6626,9 @@ if ($action) {
             status: 'pending',
             aborted: false
           }));
-  
+
           this.queue.push(...newTasks);
+          this.dock.classList.remove('minimized');
           this.dock.classList.add('active');
           this.renderDock();
           if (!this.isProcessing) this.processQueue();
@@ -6537,8 +6751,11 @@ if ($action) {
           this.isProcessing = false;
           const allDone = this.queue.every(i => i.status === 'completed');
           if (allDone) {
-            this.title.innerText = `${this.queue.length} upload(s) complete`;
+            const count = this.queue.length;
+            this.title.innerText = `${count} upload(s) complete`;
             this.bar.style.width = '100%';
+            // Clear queue on completion to prevent duplicate processing on subsequent uploads
+            this.queue = [];
             if (window.app) app.refresh();
           }
         }
@@ -6955,7 +7172,7 @@ if ($action) {
             const returnSection = app.originSection || (app.currentSection !== 'home' ? app.currentSection : null);
             if (returnSection) {
               app.originSection = null;
-              const targetHash = `#/${returnSection}`;
+              const targetHash = `#/@${returnSection}`;
               if (window.location.hash !== targetHash) {
                 window.location.hash = targetHash;
               } else {
@@ -7424,7 +7641,6 @@ if ($action) {
           };
           document.getElementById('btn-more-menu').addEventListener('click', toggleMoreMenu);
   
-          // Toggle Minified Grid & Appearance Adjustments Dropdown
           if (this.btnGridAdjust && this.dropdownGridAdjust) {
             this.btnGridAdjust.addEventListener('click', (e) => {
               e.stopPropagation();
@@ -7433,7 +7649,18 @@ if ($action) {
               this.dropdownGridAdjust.style.right = `${window.innerWidth - rect.right}px`;
               this.dropdownGridAdjust.classList.toggle('active');
             });
-            this.dropdownGridAdjust.addEventListener('click', (e) => e.stopPropagation());
+
+            // Prevent any mouse, touch or pointer event inside the dropdown from bubbling and closing it
+            ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'pointerdown', 'pointerup'].forEach(evt => {
+              this.dropdownGridAdjust.addEventListener(evt, e => e.stopPropagation());
+            });
+          }
+
+          const mobGridContainer = document.getElementById('mobile-grid-adjust-container');
+          if (mobGridContainer) {
+            ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'pointerdown', 'pointerup'].forEach(evt => {
+              mobGridContainer.addEventListener(evt, e => e.stopPropagation());
+            });
           }
 
           if (this.sliderCols) {
@@ -7441,7 +7668,7 @@ if ($action) {
             this.sliderCols.addEventListener('input', (e) => {
               this.gridCols = parseInt(e.target.value);
               localStorage.setItem('pg_grid_cols', this.gridCols);
-              this.applyGridSizing();
+              this.applyGridSizing(true);
             });
           }
 
@@ -7450,7 +7677,7 @@ if ($action) {
             this.sliderGap.addEventListener('input', (e) => {
               this.gridGap = parseInt(e.target.value);
               localStorage.setItem('pg_grid_gap', this.gridGap);
-              this.applyGridSizing();
+              this.applyGridSizing(false);
             });
           }
 
@@ -7459,7 +7686,7 @@ if ($action) {
             this.sliderRadius.addEventListener('input', (e) => {
               this.gridRadius = parseInt(e.target.value);
               localStorage.setItem('pg_grid_radius', this.gridRadius);
-              this.applyGridSizing();
+              this.applyGridSizing(false);
             });
           }
 
@@ -7488,7 +7715,7 @@ if ($action) {
             this.sliderColsMob.addEventListener('input', (e) => {
               this.gridCols = parseInt(e.target.value);
               localStorage.setItem('pg_grid_cols', this.gridCols);
-              this.applyGridSizing();
+              this.applyGridSizing(true);
             });
           }
 
@@ -7496,7 +7723,7 @@ if ($action) {
             this.sliderGapMob.addEventListener('input', (e) => {
               this.gridGap = parseInt(e.target.value);
               localStorage.setItem('pg_grid_gap', this.gridGap);
-              this.applyGridSizing();
+              this.applyGridSizing(false);
             });
           }
 
@@ -7504,7 +7731,7 @@ if ($action) {
             this.sliderRadiusMob.addEventListener('input', (e) => {
               this.gridRadius = parseInt(e.target.value);
               localStorage.setItem('pg_grid_radius', this.gridRadius);
-              this.applyGridSizing();
+              this.applyGridSizing(false);
             });
           }
   
@@ -7828,13 +8055,14 @@ if ($action) {
           if (mobSep) mobSep.style.display = showCols ? 'block' : 'none';
         }
     
-        applyGridSizing() {
+        applyGridSizing(recalcColumns = false) {
           const text = this.gridCols > 0 ? `${this.gridCols}` : 'Auto';
           if (this.gridCols > 0) {
             this.container.setAttribute('data-cols', this.gridCols);
           } else {
             this.container.removeAttribute('data-cols');
           }
+
           if (this.sliderColsVal) this.sliderColsVal.innerText = text;
           if (this.sliderGapVal) this.sliderGapVal.innerText = `${this.gridGap}px`;
           if (this.sliderRadiusVal) this.sliderRadiusVal.innerText = `${this.gridRadius}px`;
@@ -7851,7 +8079,7 @@ if ($action) {
           if (this.sliderGapValMob) this.sliderGapValMob.innerText = `${this.gridGap}px`;
           if (this.sliderRadiusValMob) this.sliderRadiusValMob.innerText = `${this.gridRadius}px`;
 
-          // Apply directly on container element style for immediate scoped rendering
+          // Direct instantaneous CSS variable interpolation without layout thrashing
           if (this.container) {
             this.container.style.setProperty('--grid-gap', `${this.gridGap}px`);
             this.container.style.setProperty('--card-radius', `${this.gridRadius}px`);
@@ -7859,10 +8087,15 @@ if ($action) {
           document.documentElement.style.setProperty('--grid-gap', `${this.gridGap}px`);
           document.documentElement.style.setProperty('--card-radius', `${this.gridRadius}px`);
 
-          // Row height scale mapping for Justified Masonry
           const heightMap = { 0: '200px', 1: '380px', 2: '320px', 3: '270px', 4: '220px', 5: '185px', 6: '155px', 8: '125px' };
           if (this.container) {
             this.container.style.setProperty('--justified-row-height', heightMap[this.gridCols] || '200px');
+          }
+
+          // Only rearrange DOM structure if column count itself was modified
+          if (recalcColumns && (this.layout === 'columns' || this.layout === 'justified')) {
+            this.renderLimit = 25;
+            this.renderGallery(true);
           }
 
           if (this.currentSection === 'activity' || this.currentSection === 'trash') {
@@ -7982,15 +8215,17 @@ if ($action) {
           try { decoded = decodeURIComponent(raw); } catch (e) { decoded = raw; }
           decoded = decoded.replace(/^\/+|\/+$/g, '').replace(/\.part$/i, '');
 
-          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
-          const lowerDecoded = decoded.toLowerCase();
-
-          if (specialSections.includes(lowerDecoded)) {
-            if (window.lightbox && lightbox.el && lightbox.el.classList.contains('active')) {
-              lightbox.close(false);
+          // Distinguish special virtual tabs (@gallery, @recents, etc.) from physical folders
+          if (decoded.startsWith('@')) {
+            const secName = decoded.substring(1).toLowerCase();
+            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
+            if (specialSections.includes(secName)) {
+              if (window.lightbox && lightbox.el && lightbox.el.classList.contains('active')) {
+                lightbox.close(false);
+              }
+              this.switchDriveSection(secName, false);
+              return;
             }
-            this.switchDriveSection(lowerDecoded, false);
-            return;
           }
 
           if (!decoded) {
@@ -8612,9 +8847,15 @@ if ($action) {
                   thumbRatio = 'style="min-height:140px; height:auto;"';
                 }
               } else if (item.type === 'video') {
-                thumbHtml = `<div class="type-icon" style="color:#a8c7fa;"><svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg></div>`;
+                thumbHtml = `
+                  <div class="type-icon" style="color:#a8c7fa;"><svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg></div>
+                  <img src="?action=thumb&f=${encodeURIComponent(item.path)}" alt="" loading="lazy" decoding="async" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.2s; z-index:3;" onload="this.style.opacity='1'; this.closest('.file-card')?.classList.add('has-image');" onerror="app.captureVideoThumb(this, '${encodeURIComponent(item.path)}')">
+                `;
               } else if (item.type === 'audio') {
-                thumbHtml = `<div class="type-icon" style="color:#f2b8b5;"><svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg></div>`;
+                thumbHtml = `
+                  <div class="type-icon" style="color:#f2b8b5;"><svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg></div>
+                  <img src="?action=thumb&f=${encodeURIComponent(item.path)}" alt="" loading="lazy" decoding="async" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.2s; z-index:3;" onload="this.style.opacity='1'; this.closest('.file-card')?.classList.add('has-image');" onerror="this.remove();">
+                `;
               } else if (item.type === 'archive') {
                 thumbHtml = `<div class="type-icon" style="color:#fde293;"><svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.1 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg></div>`;
               } else {
@@ -9045,15 +9286,15 @@ if ($action) {
         updateBreadcrumbs() {
           let html = `<a href="#/" class="bc-item ${this.currentSection === 'home' && !this.currentPath ? 'active' : ''}">Home</a>`;
           if (this.currentSection === 'recents') {
-            html += `<span class="bc-sep">/</span><a href="#/recents" class="bc-item active">Recents</a>`;
+            html += `<span class="bc-sep">/</span><a href="#/@recents" class="bc-item active">Recents</a>`;
           } else if (this.currentSection === 'starred') {
-            html += `<span class="bc-sep">/</span><a href="#/starred" class="bc-item active">Starred Items</a>`;
+            html += `<span class="bc-sep">/</span><a href="#/@starred" class="bc-item active">Starred Items</a>`;
           } else if (this.currentSection === 'activity') {
-            html += `<span class="bc-sep">/</span><a href="#/activity" class="bc-item active">File Activity</a>`;
+            html += `<span class="bc-sep">/</span><a href="#/@activity" class="bc-item active">File Activity</a>`;
           } else if (this.currentSection === 'trash') {
-            html += `<span class="bc-sep">/</span><a href="#/trash" class="bc-item active">Trash Bin</a>`;
+            html += `<span class="bc-sep">/</span><a href="#/@trash" class="bc-item active">Trash Bin</a>`;
           } else if (this.currentSection === 'gallery') {
-            html += `<span class="bc-sep">/</span><a href="#/gallery" class="bc-item active">Gallery</a>`;
+            html += `<span class="bc-sep">/</span><a href="#/@gallery" class="bc-item active">Gallery</a>`;
           } else if (this.currentPath) {
             const parts = this.currentPath.split('/');
             let accum = '';
@@ -9079,6 +9320,33 @@ if ($action) {
           if (doc.includes(ext)) return 'text';
           if (arc.includes(ext)) return 'archive';
           return 'file';
+        }
+
+        captureVideoThumb(imgEl, encodedPath) {
+          if (!imgEl) return;
+          const video = document.createElement('video');
+          video.src = `?action=raw&f=${encodedPath}#t=0.8`;
+          video.crossOrigin = 'anonymous';
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = 'metadata';
+
+          video.onloadeddata = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.min(480, video.videoWidth || 320);
+              canvas.height = Math.min(480, video.videoHeight || 240);
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              imgEl.src = canvas.toDataURL('image/jpeg', 0.82);
+              imgEl.style.opacity = '1';
+              imgEl.closest('.file-card')?.classList.add('has-image');
+              video.remove();
+            } catch (e) {
+              imgEl.remove();
+            }
+          };
+          video.onerror = () => { imgEl.remove(); };
         }
 
         updateBadges() {
@@ -10040,7 +10308,7 @@ if ($action) {
 
         switchDriveSection(section, updateHash = true) {
           if (updateHash) {
-            const targetHash = section === 'home' ? '#/' : `#/${section}`;
+            const targetHash = section === 'home' ? '#/' : `#/@${section}`;
             if (window.location.hash !== targetHash) {
               window.location.hash = targetHash;
               return;
@@ -11267,7 +11535,7 @@ if ($action) {
           if (returnSection) {
             this.originSection = null;
             this.currentSection = returnSection;
-            const targetHash = `#/${returnSection}`;
+            const targetHash = `#/@${returnSection}`;
             if (window.location.hash !== targetHash) {
               window.location.hash = targetHash;
             } else {
