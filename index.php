@@ -30,6 +30,142 @@ $config = [
 
 ini_set('memory_limit', $config['memory_limit']);
 
+if (isset($_GET['pwa'])) {
+  $pwaMode = $_GET['pwa'];
+  if ($pwaMode === 'manifest') {
+    header('Content-Type: application/manifest+json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    echo json_encode([
+      "name"             => $config['app_title'],
+      "short_name"       => $config['app_title'],
+      "start_url"        => "./",
+      "scope"            => "./",
+      "display"          => "standalone",
+      "orientation"      => "any",
+      "background_color" => "#141218",
+      "theme_color"      => "#141218",
+      "description"      => "High-performance self-hosted cloud drive, media gallery, and markdown studio.",
+      "icons"            => [
+        [
+          "src"     => "https://icons.getbootstrap.com/assets/icons/folder2-open.svg",
+          "sizes"   => "192x192",
+          "type"    => "image/svg+xml",
+          "purpose" => "any maskable"
+        ],
+        [
+          "src"     => "https://icons.getbootstrap.com/assets/icons/folder2-open.svg",
+          "sizes"   => "512x512",
+          "type"    => "image/svg+xml",
+          "purpose" => "any maskable"
+        ]
+      ]
+    ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    exit;
+  }
+
+  if ($pwaMode === 'sw') {
+    header('Content-Type: application/javascript; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    echo <<<SW
+const CACHE_NAME = 'phpfiles-cdn-cache-v1';
+const STATIC_ASSETS = [
+  './',
+  'https://icons.getbootstrap.com/assets/icons/folder2-open.svg',
+  'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap',
+  'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/nord.min.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/php/php.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js',
+  'https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.esm.min.mjs',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  'https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => {
+      return cache.addAll(STATIC_ASSETS.map(url => new Request(url, { mode: 'cors' }))).catch(() => {});
+    }).then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          if (cacheName !== CACHE_NAME) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    }).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
+  // Bypass caching for API actions, uploads, raw streams, or non-GET requests
+  if (event.request.method !== 'GET' || url.searchParams.has('action') || (url.pathname.endsWith('.php') && url.searchParams.size > 0 && !url.searchParams.has('pwa'))) {
+    return;
+  }
+
+  // Cache-first strategy for CDNs and fonts
+  if (
+    STATIC_ASSETS.some(asset => event.request.url.startsWith(asset)) ||
+    url.hostname.includes('cdnjs.cloudflare.com') ||
+    url.hostname.includes('cdn.jsdelivr.net') ||
+    url.hostname.includes('fonts.googleapis.com') ||
+    url.hostname.includes('fonts.gstatic.com')
+  ) {
+    event.respondWith(
+      caches.match(event.request).then(cachedResponse => {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+        return fetch(event.request).then(networkResponse => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
+          }
+          return networkResponse;
+        }).catch(() => cachedResponse);
+      })
+    );
+    return;
+  }
+
+  // Network-first with offline cache fallback for application shell
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).then(networkResponse => {
+        const responseClone = networkResponse.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
+        return networkResponse;
+      }).catch(() => caches.match('./') || caches.match(event.request))
+    );
+  }
+});
+SW;
+    exit;
+  }
+}
+
 function ensure_getid3() {
   $target_file = __DIR__ . '/getid3/getid3.php';
   if (file_exists($target_file)) {
@@ -826,6 +962,34 @@ function cleanOldTrash($config) {
 $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 $isAdmin = !$config['auth_enabled'] || !empty($_SESSION['authenticated']);
 $isDemo = $config['auth_enabled'] && !$isAdmin;
+
+if ($action === 'og_image') {
+  header('Content-Type: image/svg+xml; charset=utf-8');
+  header('Cache-Control: public, max-age=604800, immutable');
+  $title = htmlspecialchars($config['app_title']);
+  echo <<<SVG
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#211f26"/>
+      <stop offset="100%" stop-color="#141218"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#141218"/>
+  <rect x="40" y="40" width="1120" height="550" rx="32" fill="url(#cardGrad)" stroke="#49454f" stroke-width="2"/>
+  
+  <!-- Exact Bootstrap folder2-open SVG icon centered -->
+  <g transform="translate(520, 110) scale(10)" fill="#d0bcff">
+    <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/>
+  </g>
+  
+  <text x="600" y="360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="700" fill="#e6e0e9" text-anchor="middle">{$title}</text>
+  <text x="600" y="415" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="500" fill="#cac4d0" text-anchor="middle">Self-Hosted Web Cloud Drive &amp; Media Studio</text>
+  <text x="600" y="475" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="400" fill="#938f99" text-anchor="middle">Single-File PHP • PWA Offline • Media Streaming • Document Studio</text>
+</svg>
+SVG;
+  exit;
+}
 
 if ($action === 'login') {
   $pass = $_POST['password'] ?? '';
@@ -2633,14 +2797,57 @@ if ($action) {
 
   jsonResponse(['error' => 'Invalid action'], 400);
 }
+
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+$appProtocol = $isHttps ? 'https://' : 'http://';
+$appHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$appScript = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+$canonicalUrl = $appProtocol . $appHost . $appScript;
+$ogImageUrl = $canonicalUrl . '?action=og_image';
+$pageTitle = htmlspecialchars($config['app_title']) . ' – Self-Hosted Cloud Drive & Media Studio';
+$pageDesc = 'A lightweight, single-file self-hosted cloud drive and media gallery with markdown studio, video streaming, document previewing, and offline PWA capabilities.';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title><?= htmlspecialchars($config['app_title']) ?></title>
+    <title><?= $pageTitle ?></title>
     <link rel="icon" type="image/svg+xml" href="https://icons.getbootstrap.com/assets/icons/folder2-open.svg">
+
+    <!-- Primary Meta & Search Engine Optimization (50-60 char title & 120-160 char description) -->
+    <meta name="title" content="<?= $pageTitle ?>">
+    <meta name="description" content="<?= $pageDesc ?>">
+    <link rel="canonical" href="<?= $canonicalUrl ?>">
+
+    <!-- Open Graph Social Media Protocol (Standard 1200x630 Aspect Ratio) -->
+    <meta property="og:site_name" content="<?= htmlspecialchars($config['app_title']) ?>">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="<?= $canonicalUrl ?>">
+    <meta property="og:title" content="<?= $pageTitle ?>">
+    <meta property="og:description" content="<?= $pageDesc ?>">
+    <meta property="og:image" content="<?= $ogImageUrl ?>">
+    <meta property="og:image:secure_url" content="<?= $ogImageUrl ?>">
+    <meta property="og:image:type" content="image/svg+xml">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="<?= htmlspecialchars($config['app_title']) ?> Preview">
+
+    <!-- X (Twitter) Large Image Summary Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="<?= $canonicalUrl ?>">
+    <meta name="twitter:title" content="<?= $pageTitle ?>">
+    <meta name="twitter:description" content="<?= $pageDesc ?>">
+    <meta name="twitter:image" content="<?= $ogImageUrl ?>">
+
+    <!-- PWA Capabilities & Native Mobile App Shell -->
+    <link rel="manifest" href="?pwa=manifest">
+    <meta name="theme-color" content="#141218">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="<?= htmlspecialchars($config['app_title']) ?>">
+    <link rel="apple-touch-icon" href="https://icons.getbootstrap.com/assets/icons/folder2-open.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -12364,6 +12571,12 @@ if ($action) {
       window.app = new GalleryApp();
   
       document.querySelectorAll('.modal-close').forEach(b => b.addEventListener('click', () => window.app.closeModals()));
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('?pwa=sw').catch(() => {});
+        });
+      }
     </script>
   </body>
 </html>
