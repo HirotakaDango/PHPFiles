@@ -8034,9 +8034,47 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
         startSlideshow() {
           if (!this.mediaList || this.mediaList.length <= 1) return;
+          const isImg = (item) => {
+            if (!item) return false;
+            const ext = (item.name ? item.name.split('.').pop() : '').toLowerCase();
+            return item.type === 'image' || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(ext);
+          };
+          if (!this.mediaList.some(isImg)) return;
+
           this.isSlideshowActive = true;
           this.updateSlideshowUI();
-          this.runSlideshowStep();
+
+          if (!isImg(this.mediaList[this.currentIndex])) {
+            this.navNextImage();
+          } else {
+            this.runSlideshowStep();
+          }
+        }
+
+        navNextImage() {
+          if (!this.mediaList || this.mediaList.length === 0) return;
+          const len = this.mediaList.length;
+          let nextIdx = (this.currentIndex + 1) % len;
+          let count = 0;
+
+          const isImg = (item) => {
+            if (!item) return false;
+            const ext = (item.name ? item.name.split('.').pop() : '').toLowerCase();
+            return item.type === 'image' || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(ext);
+          };
+
+          while (!isImg(this.mediaList[nextIdx]) && count < len) {
+            nextIdx = (nextIdx + 1) % len;
+            count++;
+          }
+
+          if (isImg(this.mediaList[nextIdx])) {
+            this.resetTransform(false);
+            this.currentIndex = nextIdx;
+            this.loadCurrent();
+          } else {
+            this.stopSlideshow();
+          }
         }
 
         runSlideshowStep() {
@@ -8050,12 +8088,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
               img.classList.add('disintegrate');
               setTimeout(() => {
                 if (!this.isSlideshowActive) return;
-                this.resetTransform(false);
-                this.nav(1);
+                this.navNextImage();
               }, 500);
             } else {
-              this.resetTransform(true);
-              this.nav(1);
+              this.navNextImage();
             }
           }, 14500);
         }
