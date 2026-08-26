@@ -4639,6 +4639,23 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
       .lightbox-media.smooth-zoom {
         transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease;
       }
+      .lightbox-media.disintegrate {
+        opacity: 0 !important;
+        filter: blur(18px) brightness(1.4) contrast(1.2) !important;
+        transform: scale(1.06) translateZ(0) !important;
+        transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), filter 0.5s cubic-bezier(0.4, 0, 0.2, 1), transform 0.5s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+      .lightbox-media.reconstruct {
+        opacity: 0;
+        filter: blur(16px) brightness(1.3) contrast(1.1);
+        transform: scale(0.95) translateZ(0);
+        transition: opacity 0.65s cubic-bezier(0.2, 0, 0, 1), filter 0.65s cubic-bezier(0.2, 0, 0, 1), transform 0.65s cubic-bezier(0.2, 0, 0, 1);
+      }
+      .lightbox-media.reconstruct.ready {
+        opacity: 1 !important;
+        filter: none !important;
+        transform: translate3d(0, 0, 0) scale(1) !important;
+      }
       .lightbox-audio-card {
         background: rgba(28, 25, 34, 0.85);
         backdrop-filter: blur(24px);
@@ -6404,6 +6421,9 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           <div class="lightbox-title" id="lb-title">image.jpg</div>
         </div>
         <div style="display:flex; gap:0.4rem; align-items:center;">
+          <button class="btn-icon" id="btn-lb-slideshow" title="Play Slideshow (15s)">
+            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </button>
           <button class="btn-icon" id="btn-lb-search-google" title="Search on Google">
             <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z"/></svg>
           </button>
@@ -6420,6 +6440,9 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
       </button>
       <div class="lightbox-body" id="lb-body">
         <img class="lightbox-media" id="lb-img" src="" alt="">
+      </div>
+      <div id="lb-slideshow-track" style="display:none; position:absolute; bottom:0; left:0; width:100%; height:3px; background:rgba(255,255,255,0.25); z-index:3600; pointer-events:none; overflow:hidden;">
+        <div id="lb-slideshow-bar" style="width:0%; height:100%; background:rgba(255,0,0,0.85); transition:none;"></div>
       </div>
       <div class="lightbox-bottom-bar" id="lb-bottom-bar">
         <div class="lightbox-carousel-wrap" id="lb-carousel-wrap">
@@ -7585,6 +7608,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           this.carouselBatchSize = 25;
           this.carouselLoadedCount = 0;
 
+          // Slideshow State
+          this.slideshowTimer = null;
+          this.isSlideshowActive = false;
+
           this.bindEvents();
         }
 
@@ -7632,6 +7659,11 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           document.getElementById('btn-lb-close')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.close();
+          });
+
+          document.getElementById('btn-lb-slideshow')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleSlideshow();
           });
 
           // Integrated Header Next / Prev Buttons
@@ -7992,6 +8024,78 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           }
         }
 
+        toggleSlideshow() {
+          if (this.isSlideshowActive) {
+            this.stopSlideshow();
+          } else {
+            this.startSlideshow();
+          }
+        }
+
+        startSlideshow() {
+          if (!this.mediaList || this.mediaList.length <= 1) return;
+          this.isSlideshowActive = true;
+          this.updateSlideshowUI();
+          this.runSlideshowStep();
+        }
+
+        runSlideshowStep() {
+          if (!this.isSlideshowActive) return;
+          this.resetSlideshowProgress();
+          clearTimeout(this.slideshowTimer);
+          this.slideshowTimer = setTimeout(() => {
+            if (!this.isSlideshowActive) return;
+            const img = this.body.querySelector('.lightbox-media');
+            if (img && img.tagName === 'IMG') {
+              img.classList.add('disintegrate');
+              setTimeout(() => {
+                if (!this.isSlideshowActive) return;
+                this.resetTransform(false);
+                this.nav(1);
+              }, 500);
+            } else {
+              this.resetTransform(true);
+              this.nav(1);
+            }
+          }, 14500);
+        }
+
+        resetSlideshowProgress() {
+          const track = document.getElementById('lb-slideshow-track');
+          const bar = document.getElementById('lb-slideshow-bar');
+          if (!track || !bar) return;
+          if (!this.isSlideshowActive) {
+            track.style.display = 'none';
+            bar.style.transition = 'none';
+            bar.style.width = '0%';
+            return;
+          }
+          track.style.display = 'block';
+          bar.style.transition = 'none';
+          bar.style.width = '0%';
+          void bar.offsetWidth; // Force layout reflow
+          bar.style.transition = 'width 15s linear';
+          bar.style.width = '100%';
+        }
+
+        stopSlideshow() {
+          this.isSlideshowActive = false;
+          clearTimeout(this.slideshowTimer);
+          this.slideshowTimer = null;
+          this.updateSlideshowUI();
+          this.resetSlideshowProgress();
+        }
+
+        updateSlideshowUI() {
+          const btn = document.getElementById('btn-lb-slideshow');
+          if (!btn) return;
+          btn.classList.toggle('active', this.isSlideshowActive);
+          btn.title = this.isSlideshowActive ? 'Pause Slideshow' : 'Play Slideshow (15s)';
+          btn.innerHTML = this.isSlideshowActive
+            ? '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'
+            : '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+        }
+
         updateStarUI(path) {
           const isStarred = window.app ? app.starredSet.has(path) : false;
           const starBtn = document.getElementById('btn-lb-star');
@@ -8102,9 +8206,16 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
         preloadAdjacent() {
           if (!this.mediaList || this.mediaList.length <= 1) return;
-          const nextIdx = (this.currentIndex + 1) % this.mediaList.length;
-          const prevIdx = (this.currentIndex - 1 + this.mediaList.length) % this.mediaList.length;
-          [nextIdx, prevIdx].forEach(idx => {
+          const indices = [];
+          const len = this.mediaList.length;
+          for (let offset = -3; offset <= 3; offset++) {
+            if (offset === 0) continue;
+            const targetIdx = (this.currentIndex + offset + len * 3) % len;
+            if (!indices.includes(targetIdx)) {
+              indices.push(targetIdx);
+            }
+          }
+          indices.forEach(idx => {
             const item = this.mediaList[idx];
             if (item) {
               const ext = (item.name ? item.name.split('.').pop() : '').toLowerCase();
@@ -8148,6 +8259,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           const isAudio = item.type === 'audio' || ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma', 'm4r', 'mid', 'midi'].includes(ext);
           const isVideo = item.type === 'video' || ['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi', 'ts', '3gp', 'wmv', 'flv'].includes(ext);
 
+          const btnSlideshow = document.getElementById('btn-lb-slideshow');
+          if (btnSlideshow) btnSlideshow.style.display = isImage ? 'flex' : 'none';
           const btnSearchGoogle = document.getElementById('btn-lb-search-google');
           if (btnSearchGoogle) btnSearchGoogle.style.display = isImage ? 'flex' : 'none';
           const btnLbEdit = document.getElementById('btn-lb-edit');
@@ -8158,6 +8271,14 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           this.updateStarUI(item.path);
           this.scrollCarouselToActive();
           this.preloadAdjacent();
+
+          if (this.isSlideshowActive) {
+            if (!isImage) {
+              this.stopSlideshow();
+            } else {
+              this.runSlideshowStep();
+            }
+          }
 
           if (isVideo) {
             this.body.innerHTML = `
@@ -8196,16 +8317,16 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.body.innerHTML = '';
             
             const img = document.createElement('img');
-            img.className = 'lightbox-media';
+            img.className = 'lightbox-media reconstruct';
             img.id = 'lb-img';
             img.alt = fileName;
             img.decoding = 'async';
-            img.style.opacity = '0';
-            img.style.transition = 'opacity 0.2s ease';
             
             const onReady = () => {
-              img.style.opacity = '1';
-              this.resetTransform(false);
+              requestAnimationFrame(() => {
+                img.classList.add('ready');
+                this.resetTransform(false);
+              });
             };
 
             img.onload = onReady;
@@ -8230,6 +8351,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
         }
 
         close(updateHash = true) {
+          this.stopSlideshow();
           this.isPinnedUI = false;
           this.cleanupMedia();
           this.resetTransform(false);
