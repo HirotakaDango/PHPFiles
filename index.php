@@ -47,13 +47,13 @@ if (isset($_GET['pwa'])) {
       "description"      => "High-performance self-hosted cloud drive, media gallery, and markdown studio.",
       "icons"            => [
         [
-          "src"     => "https://icons.getbootstrap.com/assets/icons/folder2-open.svg",
+          "src"     => "?action=icon",
           "sizes"   => "192x192",
           "type"    => "image/svg+xml",
           "purpose" => "any maskable"
         ],
         [
-          "src"     => "https://icons.getbootstrap.com/assets/icons/folder2-open.svg",
+          "src"     => "?action=icon",
           "sizes"   => "512x512",
           "type"    => "image/svg+xml",
           "purpose" => "any maskable"
@@ -70,7 +70,7 @@ if (isset($_GET['pwa'])) {
 const CACHE_NAME = 'phpfiles-cdn-cache-v1';
 const STATIC_ASSETS = [
   './',
-  'https://icons.getbootstrap.com/assets/icons/folder2-open.svg',
+  '?action=icon',
   'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap',
   'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js',
@@ -963,6 +963,17 @@ $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 $isAdmin = !$config['auth_enabled'] || !empty($_SESSION['authenticated']);
 $isDemo = $config['auth_enabled'] && !$isAdmin;
 
+if ($action === 'icon' || $action === 'app_icon') {
+  header('Content-Type: image/svg+xml; charset=utf-8');
+  header('Cache-Control: public, max-age=604800, immutable');
+  echo <<<SVG
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="512" height="512" fill="#d0bcff">
+  <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/>
+</svg>
+SVG;
+  exit;
+}
+
 if ($action === 'og_image') {
   header('Content-Type: image/svg+xml; charset=utf-8');
   header('Cache-Control: public, max-age=604800, immutable');
@@ -978,7 +989,7 @@ if ($action === 'og_image') {
   <rect width="1200" height="630" fill="#141218"/>
   <rect x="40" y="40" width="1120" height="550" rx="32" fill="url(#cardGrad)" stroke="#49454f" stroke-width="2"/>
   
-  <!-- Exact Bootstrap folder2-open SVG icon centered -->
+  <!-- Exact Folder SVG icon centered -->
   <g transform="translate(520, 110) scale(10)" fill="#d0bcff">
     <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/>
   </g>
@@ -2813,7 +2824,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title><?= $pageTitle ?></title>
-    <link rel="icon" type="image/svg+xml" href="https://icons.getbootstrap.com/assets/icons/folder2-open.svg">
+    <link rel="icon" type="image/svg+xml" href="?action=icon">
 
     <!-- Primary Meta & Search Engine Optimization (50-60 char title & 120-160 char description) -->
     <meta name="title" content="<?= $pageTitle ?>">
@@ -2847,7 +2858,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="<?= htmlspecialchars($config['app_title']) ?>">
-    <link rel="apple-touch-icon" href="https://icons.getbootstrap.com/assets/icons/folder2-open.svg">
+    <link rel="apple-touch-icon" href="?action=icon">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -4602,15 +4613,14 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
         padding: 0;
       }
       .lightbox-media {
-        display: block;
-        max-width: 100vw;
-        max-height: 100vh;
-        max-height: 100dvh;
-        width: auto;
-        height: auto;
-        object-fit: contain;
-        object-position: center center;
-        margin: auto;
+        display: block !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+        object-position: center center !important;
+        margin: 0 !important;
         user-select: none;
         -webkit-user-drag: none;
         transform-origin: center center;
@@ -7546,6 +7556,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           this.mediaList = [];
           this.uiTimer = null;
           this.isUiVisible = true;
+          this.isPinnedUI = false;
+          this.lastTouchEndTime = 0;
 
           // Smooth Zoom & Drag Engine State
           this.scale = 1;
@@ -7583,24 +7595,36 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           document.getElementById('btn-lb-prev')?.classList.add('active');
           document.getElementById('btn-lb-next')?.classList.add('active');
           clearTimeout(this.uiTimer);
-          if (autoHide) {
+          if (autoHide && !this.isPinnedUI) {
             this.uiTimer = setTimeout(() => this.hideUI(), 3600);
           }
         }
 
         hideUI() {
           this.isUiVisible = false;
+          clearTimeout(this.uiTimer);
           if (this.header) this.header.classList.remove('active');
           if (this.bottomBar) this.bottomBar.classList.remove('active');
           document.getElementById('btn-lb-prev')?.classList.remove('active');
           document.getElementById('btn-lb-next')?.classList.remove('active');
         }
 
-        toggleUI() {
-          if (this.isUiVisible) {
-            this.hideUI();
+        toggleUI(fromUserTap = false) {
+          clearTimeout(this.uiTimer);
+          if (fromUserTap) {
+            if (this.isUiVisible) {
+              this.isPinnedUI = false;
+              this.hideUI();
+            } else {
+              this.isPinnedUI = true;
+              this.showUI(false);
+            }
           } else {
-            this.showUI();
+            if (this.isUiVisible) {
+              this.hideUI();
+            } else {
+              this.showUI(!this.isPinnedUI);
+            }
           }
         }
 
@@ -7737,7 +7761,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
           // Desktop Mouse Down / Drag
           this.body.addEventListener('mousedown', (e) => {
-            if (e.button !== 0 || e.target.closest('video, audio, button, .lightbox-carousel-wrap')) return;
+            if (Date.now() - this.lastTouchEndTime < 750) return;
+            if (e.button !== 0 || e.target.closest('video, audio, button, .lightbox-carousel-wrap, .lightbox-header, .lightbox-bottom-bar, .lightbox-arrow')) return;
             this.isMouseDragging = true;
             this.mouseStartX = e.clientX;
             this.mouseStartY = e.clientY;
@@ -7760,6 +7785,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           });
 
           window.addEventListener('mouseup', (e) => {
+            if (Date.now() - this.lastTouchEndTime < 750) return;
             if (!this.isMouseDragging) return;
             this.isMouseDragging = false;
 
@@ -7768,8 +7794,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
               this.applyTransform(true);
             }
 
-            if (this.mouseMoveDist < 5 && e.target.closest('#lb-body') && !e.target.closest('video, audio, button, .lightbox-carousel-wrap')) {
-              this.toggleUI();
+            if (this.mouseMoveDist < 5 && e.target.closest('#lb-body') && !e.target.closest('video, audio, button, .lightbox-carousel-wrap, .lightbox-header, .lightbox-bottom-bar, .lightbox-arrow')) {
+              this.toggleUI(true);
             }
           });
 
@@ -7796,7 +7822,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           // Mobile Touch Handling (Tap Toggle, Double Tap Zoom, Pinch & Swipe)
           this.body.addEventListener('touchstart', (e) => {
             const isImg = !!this.body.querySelector('img.lightbox-media');
-            if (e.target.closest('video, audio, .lightbox-audio-card, button, .lightbox-carousel-wrap')) return;
+            if (e.target.closest('video, audio, .lightbox-audio-card, button, .lightbox-carousel-wrap, .lightbox-header, .lightbox-bottom-bar, .lightbox-arrow')) return;
 
             if (e.touches.length === 2 && isImg) {
               this.isTouchPanning = false;
@@ -7861,6 +7887,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
           this.body.addEventListener('touchend', (e) => {
             const isImg = !!this.body.querySelector('img.lightbox-media');
+            this.lastTouchEndTime = Date.now();
 
             if (e.touches.length === 0) {
               if (this.scale > 1) {
@@ -7897,10 +7924,11 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
                 }
 
                 this.lastTapTime = now;
+                clearTimeout(this.tapTimeout);
                 this.tapTimeout = setTimeout(() => {
-                  this.toggleUI();
+                  this.toggleUI(true);
                   this.lastTapTime = 0;
-                }, 290);
+                }, 260);
                 return;
               }
 
@@ -7959,7 +7987,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           if (img) {
             img.classList.toggle('smooth-zoom', smooth);
             img.classList.remove('zoomed');
-            img.style.transform = 'translate3d(0, 0, 0) scale(1)';
+            img.style.transform = 'translate3d(0px, 0px, 0px) scale(1)';
             img.style.opacity = '1';
           }
         }
@@ -8036,7 +8064,6 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
         scrollCarouselToActive() {
           if (!this.carouselEl) return;
-          // Ensure tile for current index is loaded in DOM
           while (this.currentIndex >= this.carouselLoadedCount && this.carouselLoadedCount < this.mediaList.length) {
             this.loadMoreCarouselItems();
           }
@@ -8047,15 +8074,17 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
           const activeTile = this.carouselEl.querySelector(`.lb-carousel-item[data-index="${this.currentIndex}"]`);
           if (activeTile) {
-            activeTile.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            const scrollTarget = activeTile.offsetLeft - (this.carouselEl.clientWidth / 2) + (activeTile.clientWidth / 2);
+            this.carouselEl.scrollTo({ left: Math.max(0, scrollTarget), behavior: 'smooth' });
           }
         }
 
         open(mediaList, startIndex) {
           this.mediaList = mediaList || [];
           this.currentIndex = startIndex || 0;
+          this.isPinnedUI = false;
           this.el.classList.add('active');
-          this.showUI();
+          this.showUI(true);
           this.renderCarousel();
           this.loadCurrent();
         }
@@ -8102,7 +8131,11 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           try { currentDecoded = decodeURIComponent(window.location.hash.replace(/^#\/?/, '')); } catch (e) { currentDecoded = window.location.hash.replace(/^#\/?/, ''); }
 
           if (currentDecoded !== targetRel) {
-            window.location.hash = '#/' + encodeURI(targetRel);
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState(null, '', '#/' + encodeURI(targetRel));
+            } else {
+              window.location.hash = '#/' + encodeURI(targetRel);
+            }
           }
 
           const fileName = item.name || item.path.split('/').pop() || '';
@@ -8128,7 +8161,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
           if (isVideo) {
             this.body.innerHTML = `
-              <video class="lightbox-media" src="${rawUrl}" controls autoplay playsinline preload="metadata" style="max-height:100%; max-width:100%; width:auto; height:auto; object-fit:contain; background:#000; margin:auto;">
+              <video class="lightbox-media" src="${rawUrl}" controls autoplay playsinline preload="metadata" style="max-height:100%; max-width:100%; width:auto; height:auto; object-fit:contain; background:#000; margin:0;">
                 Your browser does not support HTML5 video.
               </video>
             `;
@@ -8162,9 +8195,6 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           } else {
             this.body.innerHTML = '';
             
-            const wrapper = document.createElement('div');
-            wrapper.style.cssText = 'width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden;';
-            
             const img = document.createElement('img');
             img.className = 'lightbox-media';
             img.id = 'lb-img';
@@ -8182,30 +8212,25 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             img.onerror = onReady;
             img.src = rawUrl;
             
-            wrapper.appendChild(img);
-            this.body.appendChild(wrapper);
+            this.body.appendChild(img);
             this.resetTransform(false);
           }
         }
 
         nav(dir) {
           if (!this.mediaList || this.mediaList.length <= 1) return;
-          this.showUI(true);
+          if (this.isPinnedUI) {
+            this.showUI(false);
+          } else {
+            this.hideUI();
+          }
           this.resetTransform(false);
           this.currentIndex = (this.currentIndex + dir + this.mediaList.length) % this.mediaList.length;
-          
-          if (this.body) {
-            this.body.style.display = 'none';
-            this.body.innerHTML = '';
-          }
-          
-          setTimeout(() => {
-            if (this.body) this.body.style.display = 'flex';
-            this.loadCurrent();
-          }, 20);
+          this.loadCurrent();
         }
 
         close(updateHash = true) {
+          this.isPinnedUI = false;
           this.cleanupMedia();
           this.resetTransform(false);
           this.el.classList.remove('active');
@@ -9574,41 +9599,41 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             }
   
             const renderNodes = (nodes) => {
-              let html = '';
-              nodes.forEach(n => {
-                const hasChildren = n.children && n.children.length > 0;
-                const isExpanded = this.expandedTreeNodes.has(n.path);
-                const isCollapsed = hasChildren && !isExpanded;
-  
-                html += `
-                  <div class="tree-branch ${isCollapsed ? 'collapsed' : ''}" data-branch="${n.path}">
-                    <div class="tree-node-row">
-                      ${hasChildren ? `
-                        <span class="tree-toggle" onclick="event.stopPropagation(); app.toggleTreeNode('${n.path}')">
-                          <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
-                        </span>
-                      ` : '<span class="tree-spacer"></span>'}
-                      <div class="tree-node ${n.path === (this.currentPath || '') ? 'active' : ''}" data-path="${n.path}" onclick="app.navigate('${n.path}')">
-                        <svg viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>
-                        <span>${n.name}</span>
-                      </div>
+            let html = '';
+            nodes.forEach(n => {
+              const hasChildren = n.children && n.children.length > 0;
+              const isExpanded = this.expandedTreeNodes.has(n.path);
+              const isCollapsed = hasChildren && !isExpanded;
+
+              html += `
+                <div class="tree-branch ${isCollapsed ? 'collapsed' : ''}" data-branch="${n.path}">
+                  <div class="tree-node-row">
+                    ${hasChildren ? `
+                      <span class="tree-toggle" onclick="event.stopPropagation(); app.toggleTreeNode('${n.path}')">
+                        <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
+                      </span>
+                    ` : '<span class="tree-spacer"></span>'}
+                    <div class="tree-node ${n.path === (this.currentPath || '') ? 'active' : ''}" data-path="${n.path}" onclick="app.navigate('${n.path}')">
+                      <svg viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>
+                      <span>${n.name}</span>
                     </div>
-                    ${hasChildren ? `<div class="tree-children" style="padding-left:0.85rem;">${renderNodes(n.children)}</div>` : ''}
                   </div>
-                `;
-              });
-              return html;
-            };
-  
-            const rootRow = `
-              <div class="tree-node-row">
-                <span class="tree-spacer"></span>
-                <div class="tree-node ${!this.currentPath ? 'active' : ''}" data-path="" onclick="app.navigate('')">
-                  <svg viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>
-                  <span>Root</span>
+                  ${hasChildren ? `<div class="tree-children" style="padding-left:0.85rem;">${renderNodes(n.children)}</div>` : ''}
                 </div>
+              `;
+            });
+            return html;
+          };
+
+          const rootRow = `
+            <div class="tree-node-row">
+              <span class="tree-spacer"></span>
+              <div class="tree-node ${!this.currentPath ? 'active' : ''}" data-path="" onclick="app.navigate('')">
+                <svg viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>
+                <span>Root</span>
               </div>
-            `;
+            </div>
+          `;
   
             if (cachedTree) {
               container.innerHTML = rootRow + renderNodes(cachedTree);
