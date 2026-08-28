@@ -2083,21 +2083,32 @@ if ($action) {
       $name = basename($src);
       $dest = $targetDir . DIRECTORY_SEPARATOR . $name;
 
-      if (file_exists($dest) && $src !== $dest) {
-        $ext = pathinfo($name, PATHINFO_EXTENSION);
-        $baseName = pathinfo($name, PATHINFO_FILENAME);
-        $counter = 1;
-        while (file_exists($dest)) {
-          $dest = $targetDir . DIRECTORY_SEPARATOR . "{$baseName}_({$counter})" . ($ext ? ".{$ext}" : '');
-          $counter++;
+      if (file_exists($dest)) {
+        if (is_dir($src)) {
+          $counter = 1;
+          while (file_exists($dest)) {
+            $dest = $targetDir . DIRECTORY_SEPARATOR . "{$name}_({$counter})";
+            $counter++;
+          }
+        } else {
+          $ext = pathinfo($name, PATHINFO_EXTENSION);
+          $baseName = pathinfo($name, PATHINFO_FILENAME);
+          $counter = 1;
+          while (file_exists($dest)) {
+            $dest = $targetDir . DIRECTORY_SEPARATOR . "{$baseName}_({$counter})" . ($ext !== '' ? ".{$ext}" : '');
+            $counter++;
+          }
         }
       }
 
       if ($op === 'cut') {
-        if (@rename($src, $dest)) $processed++;
+        if (@rename($src, $dest)) {
+          $processed++;
+          logDriveActivity($config['meta_file'], 'moved', $dest, 'Moved item');
+        }
       } else {
         if (is_dir($src)) {
-          // Recursive copy
+          // Recursive copy with duplicate handling
           $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($src, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
           @mkdir($dest, 0777, true);
           foreach ($it as $item) {
@@ -2109,8 +2120,12 @@ if ($action) {
             }
           }
           $processed++;
+          logDriveActivity($config['meta_file'], 'copied', $dest, 'Copied folder');
         } else {
-          if (@copy($src, $dest)) $processed++;
+          if (@copy($src, $dest)) {
+            $processed++;
+            logDriveActivity($config['meta_file'], 'copied', $dest, 'Copied file');
+          }
         }
       }
     }
@@ -4791,6 +4806,31 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
         height: 92dvh;
         border-radius: 20px;
       }
+      .clipboard-bar {
+        position: fixed;
+        bottom: calc(5.2rem + env(safe-area-inset-bottom, 0px));
+        left: 50%;
+        transform: translateX(-50%) translateY(200%);
+        background: var(--md-sys-color-surface-container-highest);
+        border: 1px solid var(--md-sys-color-primary);
+        padding: 0.4rem 0.9rem;
+        border-radius: 32px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85);
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        z-index: 5000;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease, visibility 0.2s;
+      }
+      .clipboard-bar.active {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+      }
       
       .editor-modal-header {
         display: flex;
@@ -6282,6 +6322,18 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
       </div>
     </div>
   
+    <!-- Floating Paste Indicator Bar -->
+    <div class="clipboard-bar" id="drive-clipboard-bar">
+      <span style="font-size:0.85rem; font-weight:700; color:var(--md-sys-color-primary);" id="drive-clipboard-txt">1 item ready</span>
+      <div style="width:1px; height:18px; background:var(--md-sys-color-outline-variant);"></div>
+      <button class="btn-primary" id="btn-drive-clipboard-paste" style="height:32px; padding:0 0.85rem; font-size:0.8rem;">
+        <svg viewBox="0 0 24 24" style="width:15px;height:15px;margin-right:4px;"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z"/></svg> Paste Here
+      </button>
+      <button class="btn-icon" id="btn-drive-clipboard-cancel" title="Clear Clipboard" style="width:30px; height:30px;">
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+
     <div class="dropdown-menu" id="dropdown-sort">
       <div class="dm-item" data-sort="name_asc">
         <svg viewBox="0 0 24 24"><path d="M9.25 5v14l-4.5-4.5 1.41-1.41L8 14.92V5h1.25zm11.75 0v2h-8V5h8zm-2 6v2h-6v-2h6zm-2 6v2h-4v-2h4z"/></svg>
@@ -9015,7 +9067,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             const zipName = (targetDir.split('/').pop() || 'gallery') + '.zip';
             this.downloadZipWithProgress(`?action=download_zip&dir=${encodeURIComponent(targetDir)}`, null, zipName);
           });
-  
+
+          document.getElementById('btn-drive-clipboard-paste')?.addEventListener('click', () => this.pasteClipboard());
+          document.getElementById('btn-drive-clipboard-cancel')?.addEventListener('click', () => this.clearClipboard());
+
           document.getElementById('btn-batch-clear').addEventListener('click', () => this.clearSelection());
           document.getElementById('btn-batch-download').addEventListener('click', () => this.batchDownload());
           document.getElementById('btn-batch-delete').addEventListener('click', () => this.batchDelete());
@@ -12417,18 +12472,39 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           });
         }
 
+        updateClipboardUI() {
+          const bar = document.getElementById('drive-clipboard-bar');
+          const txt = document.getElementById('drive-clipboard-txt');
+          if (!bar) return;
+          if (this.clipboard && this.clipboard.items && this.clipboard.items.length > 0) {
+            const count = this.clipboard.items.length;
+            const op = this.clipboard.operation === 'cut' ? 'Cut' : 'Copied';
+            if (txt) txt.innerText = `${count} item(s) ${op}`;
+            bar.classList.add('active');
+          } else {
+            bar.classList.remove('active');
+          }
+        }
+  
         setClipboard(operation) {
           const items = this.selectedItems.size ? Array.from(this.selectedItems) : [];
           if (!items.length) return;
           this.clipboard = { operation, items };
+          this.updateClipboardUI();
           this.toast(`${items.length} item(s) marked to ${operation}`);
         }
-
+  
         setClipboardSingle(operation, path) {
           this.clipboard = { operation, items: [path] };
+          this.updateClipboardUI();
           this.toast(`Marked to ${operation}`);
         }
-
+  
+        clearClipboard() {
+          this.clipboard = null;
+          this.updateClipboardUI();
+        }
+  
         pasteClipboard() {
           if (!this.clipboard || !this.clipboard.items.length) {
             this.toast('Clipboard is empty');
@@ -12441,6 +12517,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           }, () => {
             this.toast('Pasted successfully');
             if (this.clipboard.operation === 'cut') this.clipboard = null;
+            this.updateClipboardUI();
             this.refresh();
           });
         }
