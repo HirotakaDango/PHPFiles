@@ -298,10 +298,13 @@ function safePath($base, $requestPath) {
   $realTarget = realpath($targetPath);
   if ($realTarget === false) {
     $check = normalizePath($targetPath);
-    if (strpos($check, $realBase) === 0) return $check;
+    $normBase = normalizePath($realBase);
+    if (stripos($check . DIRECTORY_SEPARATOR, $normBase . DIRECTORY_SEPARATOR) === 0 || strcasecmp($check, $normBase) === 0) return $check;
     return false;
   }
-  if (strpos($realTarget, $realBase) !== 0) return $realBase;
+  $normTarget = normalizePath($realTarget);
+  $normBase = normalizePath($realBase);
+  if (stripos($normTarget . DIRECTORY_SEPARATOR, $normBase . DIRECTORY_SEPARATOR) !== 0 && strcasecmp($normTarget, $normBase) !== 0) return $realBase;
   return $realTarget;
 }
 
@@ -2071,6 +2074,9 @@ if ($action) {
   }
 
   if ($action === 'clipboard_paste') {
+    @ini_set('memory_limit', '512M');
+    if (function_exists('set_time_limit')) @set_time_limit(0);
+
     $targetDir = safePath($config['root_dir'], $_POST['target_dir'] ?? '');
     $op = $_POST['operation'] ?? 'copy'; // 'copy' or 'cut'
     $items = $_POST['items'] ?? [];
@@ -2474,13 +2480,20 @@ if ($action) {
 
   if ($action === 'unzip') {
     if (!$config['allow_zip']) jsonResponse(['error' => 'Extraction disabled'], 403);
+    @ini_set('memory_limit', '1024M');
+    if (function_exists('set_time_limit')) @set_time_limit(0);
+
     $file = findRealFile($config['root_dir'], $_POST['f'] ?? '');
     if (!$file || !is_file($file)) jsonResponse(['error' => 'Archive not found'], 404);
 
     $destDir = dirname($file);
     $toFolder = !empty($_POST['to_folder']) || !empty($_POST['to_subfolder']);
     if ($toFolder) {
-      $baseArchiveName = pathinfo($file, PATHINFO_FILENAME);
+      $baseArchiveName = basename($file);
+      $baseArchiveName = preg_replace('/\.(tar\.(gz|bz2|xz)|zip|tar|tgz|tbz2|tbz|gz|rar|7z|apk|epub)$/i', '', $baseArchiveName);
+      $baseArchiveName = rtrim($baseArchiveName, " .\t\n\r\0\x0B");
+      if ($baseArchiveName === '') $baseArchiveName = 'extracted_archive';
+
       $targetSubfolder = $destDir . DIRECTORY_SEPARATOR . $baseArchiveName;
       $counter = 1;
       while (file_exists($targetSubfolder)) {
@@ -2493,195 +2506,196 @@ if ($action) {
       $destDir = $targetSubfolder;
     }
 
-    $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    $realDest = realpath($destDir);
+    if (!$realDest) {
+      @mkdir($destDir, 0777, true);
+      $realDest = realpath($destDir) ?: $destDir;
+    }
 
-    if ($ext === 'zip' && class_exists('ZipArchive')) {
-      $zip = new ZipArchive();
-      if ($zip->open($file) === true) {
-        $dirMap = [];
-        for ($i = 0; $i < $zip->numFiles; $i++) {
-          $entryName = $zip->getNameIndex($i);
-          $clean = ltrim(str_replace(['\\', '..'], ['/', ''], $entryName), '/');
-          if ($clean === '') continue;
-          $parts = explode('/', $clean);
-          $top = $parts[0];
-          if (!isset($dirMap[$top])) {
-            $checkPath = $destDir . DIRECTORY_SEPARATOR . $top;
-            if (file_exists($checkPath)) {
-              $fExt = pathinfo($top, PATHINFO_EXTENSION);
-              $fBase = pathinfo($top, PATHINFO_FILENAME);
-              $cnt = 1;
-              $newTop = $top;
-              while (file_exists($destDir . DIRECTORY_SEPARATOR . $newTop)) {
-                $newTop = $fExt ? "{$fBase}_({$cnt}).{$fExt}" : "{$fBase}_({$cnt})";
-                $cnt++;
+    $lowerName = strtolower(basename($file));
+    $isZip = str_ends_with($lowerName, '.zip') || str_ends_with($lowerName, '.apk') || str_ends_with($lowerName, '.epub');
+    $isTarGz = str_ends_with($lowerName, '.tar.gz') || str_ends_with($lowerName, '.tgz');
+    $isTarBz2 = str_ends_with($lowerName, '.tar.bz2') || str_ends_with($lowerName, '.tbz2') || str_ends_with($lowerName, '.tbz');
+    $isTar = str_ends_with($lowerName, '.tar') || $isTarGz || $isTarBz2;
+    $isRar = str_ends_with($lowerName, '.rar');
+    $is7z = str_ends_with($lowerName, '.7z');
+    $isGz = str_ends_with($lowerName, '.gz') && !$isTarGz;
+    $extractedSuccess = false;
+
+    // 1. Primary Engine: ZipArchive
+    if ($isZip || (!$isTar && !$isRar && !$is7z && !$isGz)) {
+      if (class_exists('ZipArchive')) {
+        $zip = new ZipArchive();
+        if ($zip->open($file) === true) {
+          $extractedCount = 0;
+          for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entryName = $zip->getNameIndex($i);
+            if ($entryName === false || $entryName === '') continue;
+
+            $normalizedEntry = str_replace('\\', '/', $entryName);
+            $isDir = str_ends_with($normalizedEntry, '/');
+
+            $entryParts = explode('/', $normalizedEntry);
+            $safeParts = [];
+            foreach ($entryParts as $part) {
+              if ($part === '' || $part === '.') continue;
+              if ($part === '..') continue;
+              if (DIRECTORY_SEPARATOR === '\\') {
+                $part = preg_replace('/[\:*?"<>|]/', '_', $part);
+                $part = rtrim($part, " .");
               }
-              $dirMap[$top] = $newTop;
+              if ($part !== '') $safeParts[] = $part;
+            }
+            if (empty($safeParts)) continue;
+
+            $targetFullPath = $realDest . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $safeParts);
+
+            if ($isDir) {
+              if (!is_dir($targetFullPath)) @mkdir($targetFullPath, 0777, true);
             } else {
-              $dirMap[$top] = $top;
-            }
-          }
-        }
+              $targetParent = dirname($targetFullPath);
+              if (!is_dir($targetParent)) @mkdir($targetParent, 0777, true);
 
-        for ($i = 0; $i < $zip->numFiles; $i++) {
-          $entryName = $zip->getNameIndex($i);
-          $cleanEntry = ltrim(str_replace(['\\', '..'], ['/', ''], $entryName), '/');
-          if ($cleanEntry === '') continue;
-
-          $parts = explode('/', $cleanEntry);
-          if (isset($dirMap[$parts[0]])) {
-            $parts[0] = $dirMap[$parts[0]];
-            $cleanEntry = implode('/', $parts);
-          }
-
-          $isDir = substr($entryName, -1) === '/';
-          $target = $destDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cleanEntry);
-
-          if ($isDir) {
-            if (!is_dir($target)) @mkdir($target, 0777, true);
-          } else {
-            $targetParent = dirname($target);
-            if (!is_dir($targetParent)) @mkdir($targetParent, 0777, true);
-
-            if (file_exists($target)) {
-              $fExt = pathinfo($target, PATHINFO_EXTENSION);
-              $fBase = pathinfo($target, PATHINFO_FILENAME);
-              $cnt = 1;
-              while (file_exists($target)) {
-                $target = $targetParent . DIRECTORY_SEPARATOR . "{$fBase}_({$cnt})" . ($fExt ? ".{$fExt}" : '');
-                $cnt++;
-              }
-            }
-
-            $stream = $zip->getStream($entryName);
-            if ($stream) {
-              $out = @fopen($target, 'wb');
-              if ($out) {
-                while (!feof($stream)) {
-                  fwrite($out, fread($stream, 65536));
+              $written = false;
+              $stream = @$zip->getStream($entryName);
+              if ($stream) {
+                $out = @fopen($targetFullPath, 'wb');
+                if ($out) {
+                  while (!feof($stream)) {
+                    $buf = fread($stream, 524288);
+                    if ($buf === false || $buf === '') break;
+                    fwrite($out, $buf);
+                  }
+                  fclose($out);
+                  $written = true;
                 }
-                fclose($out);
+                fclose($stream);
               }
-              fclose($stream);
+
+              if (!$written) {
+                $content = @$zip->getFromIndex($i);
+                if ($content !== false) {
+                  @file_put_contents($targetFullPath, $content);
+                  $written = true;
+                }
+              }
+
+              if (!$written) {
+                @$zip->extractTo($realDest, $entryName);
+              }
+
+              if (file_exists($targetFullPath)) $extractedCount++;
             }
           }
+          $zip->close();
+          if ($extractedCount > 0) $extractedSuccess = true;
         }
-        $zip->close();
-        logDriveActivity($config['meta_file'], 'modified', $destDir, 'Extracted ZIP archive');
-        jsonResponse(['success' => true]);
       }
-    } elseif (in_array($ext, ['tar', 'gz', 'tgz']) && class_exists('PharData')) {
+    }
+
+    // 2. Primary Engine: PharData (.tar, .tar.gz, .tgz, .tar.bz2)
+    if (!$extractedSuccess && ($isTar || $isTarGz || $isTarBz2) && class_exists('PharData')) {
       try {
         $phar = new PharData($file);
-        $dirMap = [];
-        foreach (new RecursiveIteratorIterator($phar, RecursiveIteratorIterator::SELF_FIRST) as $item) {
-          $subPath = ltrim(str_replace(['\\', '..'], ['/', ''], $item->getPathname()), '/');
-          $rel = substr($subPath, strlen(realpath($file)));
-          $cleanRel = ltrim(str_replace(['\\', '..'], ['/', ''], $rel), '/');
-          if ($cleanRel === '') continue;
-          $parts = explode('/', $cleanRel);
-          $top = $parts[0];
-          if (!isset($dirMap[$top])) {
-            $checkPath = $destDir . DIRECTORY_SEPARATOR . $top;
-            if (file_exists($checkPath)) {
-              $fExt = pathinfo($top, PATHINFO_EXTENSION);
-              $fBase = pathinfo($top, PATHINFO_FILENAME);
-              $cnt = 1;
-              $newTop = $top;
-              while (file_exists($destDir . DIRECTORY_SEPARATOR . $newTop)) {
-                $newTop = $fExt ? "{$fBase}_({$cnt}).{$fExt}" : "{$fBase}_({$cnt})";
-                $cnt++;
-              }
-              $dirMap[$top] = $newTop;
-            } else {
-              $dirMap[$top] = $top;
+        if ($phar->extractTo($realDest, null, true)) {
+          $extractedSuccess = true;
+        }
+      } catch (Exception $e) {
+        try {
+          if ($isTarGz) {
+            $phar = new PharData($file);
+            $tarPhar = $phar->decompress();
+            if ($tarPhar->extractTo($realDest, null, true)) {
+              $extractedSuccess = true;
             }
           }
+        } catch (Exception $ex) {}
+      }
+    }
+
+    // 3. Primary Engine: gzopen (.gz single file)
+    if (!$extractedSuccess && $isGz && function_exists('gzopen')) {
+      $outName = pathinfo($file, PATHINFO_FILENAME);
+      $targetPath = $realDest . DIRECTORY_SEPARATOR . $outName;
+      $gz = @gzopen($file, 'rb');
+      $out = @fopen($targetPath, 'wb');
+      if ($gz && $out) {
+        while (!gzeof($gz)) {
+          $chunk = gzread($gz, 524288);
+          if ($chunk === false || $chunk === '') break;
+          fwrite($out, $chunk);
         }
+        gzclose($gz);
+        fclose($out);
+        $extractedSuccess = true;
+      }
+      if ($gz) @gzclose($gz);
+      if ($out) @fclose($out);
+    }
 
-        foreach (new RecursiveIteratorIterator($phar, RecursiveIteratorIterator::SELF_FIRST) as $item) {
-          $subPath = ltrim(str_replace(['\\', '..'], ['/', ''], $item->getPathname()), '/');
-          $rel = substr($subPath, strlen(realpath($file)));
-          $cleanRel = ltrim(str_replace(['\\', '..'], ['/', ''], $rel), '/');
-          if ($cleanRel === '') continue;
-
-          $parts = explode('/', $cleanRel);
-          if (isset($dirMap[$parts[0]])) {
-            $parts[0] = $dirMap[$parts[0]];
-            $cleanRel = implode('/', $parts);
-          }
-
-          $target = $destDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cleanRel);
-
-          if ($item->isDir()) {
-            if (!is_dir($target)) @mkdir($target, 0777, true);
-          } else {
-            $targetParent = dirname($target);
-            if (!is_dir($targetParent)) @mkdir($targetParent, 0777, true);
-
-            if (file_exists($target)) {
-              $fExt = pathinfo($target, PATHINFO_EXTENSION);
-              $fBase = pathinfo($target, PATHINFO_FILENAME);
-              $cnt = 1;
-              while (file_exists($target)) {
-                $target = $targetParent . DIRECTORY_SEPARATOR . "{$fBase}_({$cnt})" . ($fExt ? ".{$fExt}" : '');
-                $cnt++;
-              }
-            }
-            @copy($item->getPathname(), $target);
-          }
-        }
-        logDriveActivity($config['meta_file'], 'modified', $destDir, 'Extracted TAR archive');
-        jsonResponse(['success' => true]);
-      } catch (Exception $e) {}
-    } elseif ($ext === 'rar' && class_exists('RarArchive')) {
+    // 4. Primary Engine: RarArchive (.rar)
+    if (!$extractedSuccess && $isRar && class_exists('RarArchive')) {
       $rar = @RarArchive::open($file);
       if ($rar) {
         $entries = @$rar->getEntries();
         if ($entries) {
           foreach ($entries as $entry) {
-            $cleanEntry = ltrim(str_replace(['\\', '..'], ['/', ''], $entry->getName()), '/');
-            if ($cleanEntry === '') continue;
+            $entryName = str_replace('\\', '/', $entry->getName());
+            $parts = explode('/', $entryName);
+            $safeParts = array_filter($parts, fn($p) => $p !== '' && $p !== '.' && $p !== '..');
+            if (empty($safeParts)) continue;
 
-            $target = $destDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cleanEntry);
-
+            $targetFullPath = $realDest . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $safeParts);
             if ($entry->isDirectory()) {
-              if (!is_dir($target)) @mkdir($target, 0777, true);
+              if (!is_dir($targetFullPath)) @mkdir($targetFullPath, 0777, true);
             } else {
-              $targetParent = dirname($target);
+              $targetParent = dirname($targetFullPath);
               if (!is_dir($targetParent)) @mkdir($targetParent, 0777, true);
-
-              if (file_exists($target)) {
-                $fExt = pathinfo($target, PATHINFO_EXTENSION);
-                $fBase = pathinfo($target, PATHINFO_FILENAME);
-                $cnt = 1;
-                while (file_exists($target)) {
-                  $target = $targetParent . DIRECTORY_SEPARATOR . "{$fBase}_({$cnt})" . ($fExt ? ".{$fExt}" : '');
-                  $cnt++;
-                }
-              }
-
-              $stream = @$entry->getStream();
-              if ($stream) {
-                $out = @fopen($target, 'wb');
-                if ($out) {
-                  while (!feof($stream)) {
-                    fwrite($out, fread($stream, 65536));
-                  }
-                  fclose($out);
-                }
-                fclose($stream);
-              }
+              @$entry->extract($targetParent, basename($targetFullPath));
             }
           }
+          $rar->close();
+          $extractedSuccess = true;
         }
-        $rar->close();
-        logDriveActivity($config['meta_file'], 'modified', $destDir, 'Extracted RAR archive');
-        jsonResponse(['success' => true]);
+        @$rar->close();
       }
     }
 
-    jsonResponse(['error' => 'Failed to extract archive format'], 500);
+    // 5. Universal CLI Fallback (7z, 7za, unzip, tar, unrar)
+    if (!$extractedSuccess && function_exists('exec') && !ini_get('safe_mode')) {
+      $escFile = escapeshellarg($file);
+      $escDest = escapeshellarg($realDest);
+
+      @exec("7z x -y -o{$escDest} {$escFile} 2>&1", $out7z, $ret7z);
+      if ($ret7z === 0) $extractedSuccess = true;
+
+      if (!$extractedSuccess) {
+        @exec("7za x -y -o{$escDest} {$escFile} 2>&1", $out7za, $ret7za);
+        if ($ret7za === 0) $extractedSuccess = true;
+      }
+
+      if (!$extractedSuccess && $isZip) {
+        @exec("unzip -o -q {$escFile} -d {$escDest} 2>&1", $outUnzip, $retUnzip);
+        if ($retUnzip === 0) $extractedSuccess = true;
+      }
+
+      if (!$extractedSuccess && $isTar) {
+        @exec("tar -xf {$escFile} -C {$escDest} 2>&1", $outTar, $retTar);
+        if ($retTar === 0) $extractedSuccess = true;
+      }
+
+      if (!$extractedSuccess && $isRar) {
+        @exec("unrar x -y -o+ {$escFile} {$escDest}/ 2>&1", $outRar, $retRar);
+        if ($retRar === 0) $extractedSuccess = true;
+      }
+    }
+
+    if ($extractedSuccess) {
+      logDriveActivity($config['meta_file'], 'modified', $destDir, 'Extracted archive');
+      jsonResponse(['success' => true]);
+    }
+
+    jsonResponse(['error' => 'Failed to extract archive. Format may be unsupported or corrupted.'], 500);
   }
 
   if ($action === 'download_zip') {
@@ -9068,8 +9082,13 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.downloadZipWithProgress(`?action=download_zip&dir=${encodeURIComponent(targetDir)}`, null, zipName);
           });
 
-          document.getElementById('btn-drive-clipboard-paste')?.addEventListener('click', () => this.pasteClipboard());
-          document.getElementById('btn-drive-clipboard-cancel')?.addEventListener('click', () => this.clearClipboard());
+          document.getElementById('btn-drive-clipboard-paste')?.addEventListener('click', () => {
+            this.pasteClipboard();
+          });
+
+          document.getElementById('btn-drive-clipboard-cancel')?.addEventListener('click', () => {
+            this.clearClipboard();
+          });
 
           document.getElementById('btn-batch-clear').addEventListener('click', () => this.clearSelection());
           document.getElementById('btn-batch-download').addEventListener('click', () => this.batchDownload());
@@ -12475,51 +12494,86 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
         updateClipboardUI() {
           const bar = document.getElementById('drive-clipboard-bar');
           const txt = document.getElementById('drive-clipboard-txt');
+          const pasteBtn = document.getElementById('btn-drive-clipboard-paste');
+          if (pasteBtn) {
+            pasteBtn.disabled = false;
+            pasteBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;margin-right:4px;"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z"/></svg> Paste Here`;
+          }
           if (!bar) return;
           if (this.clipboard && this.clipboard.items && this.clipboard.items.length > 0) {
             const count = this.clipboard.items.length;
-            const op = this.clipboard.operation === 'cut' ? 'Cut' : 'Copied';
+            const op = this.clipboard.operation === 'cut' ? 'Cut (Move)' : 'Copied';
             if (txt) txt.innerText = `${count} item(s) ${op}`;
             bar.classList.add('active');
+
+            this.container.querySelectorAll('.file-card').forEach(card => {
+              const p = card.dataset.path;
+              if (this.clipboard.operation === 'cut' && this.clipboard.items.includes(p)) {
+                card.style.opacity = '0.45';
+              } else {
+                card.style.opacity = '';
+              }
+            });
           } else {
             bar.classList.remove('active');
+            this.container.querySelectorAll('.file-card').forEach(card => card.style.opacity = '');
           }
         }
-  
+
         setClipboard(operation) {
           const items = this.selectedItems.size ? Array.from(this.selectedItems) : [];
           if (!items.length) return;
           this.clipboard = { operation, items };
           this.updateClipboardUI();
-          this.toast(`${items.length} item(s) marked to ${operation}`);
+          const opLabel = operation === 'cut' ? 'Cut (Move)' : 'Copied';
+          this.toast(`${items.length} item(s) ${opLabel.toLowerCase()} to clipboard`);
         }
-  
+
         setClipboardSingle(operation, path) {
           this.clipboard = { operation, items: [path] };
           this.updateClipboardUI();
-          this.toast(`Marked to ${operation}`);
+          const opLabel = operation === 'cut' ? 'Cut (Move)' : 'Copied';
+          this.toast(`${path.split('/').pop()} marked to ${opLabel.toLowerCase()}`);
         }
-  
+
         clearClipboard() {
           this.clipboard = null;
           this.updateClipboardUI();
+          this.toast('Clipboard cleared');
         }
-  
-        pasteClipboard() {
-          if (!this.clipboard || !this.clipboard.items.length) {
+
+        pasteClipboardInto(targetPath) {
+          if (!this.clipboard || !this.clipboard.items || !this.clipboard.items.length) {
             this.toast('Clipboard is empty');
             return;
           }
-          this.api('clipboard_paste', {
-            target_dir: this.currentPath || '',
-            operation: this.clipboard.operation,
+
+          const count = this.clipboard.items.length;
+          const op = this.clipboard.operation === 'cut' ? 'cut' : 'copy';
+          const opLabel = op === 'cut' ? 'Moving' : 'Copying';
+          const targetFolder = targetPath ? targetPath.split('/').pop() : 'Root';
+
+          const pasteBtn = document.getElementById('btn-drive-clipboard-paste');
+          if (pasteBtn) {
+            pasteBtn.disabled = true;
+            pasteBtn.textContent = `${opLabel}...`;
+          }
+
+          this.runServerTaskWithProgress(`${opLabel} ${count} item(s) to "${targetFolder}"`, 'clipboard_paste', {
+            target_dir: targetPath || '',
+            operation: op,
             items: this.clipboard.items
-          }, () => {
-            this.toast('Pasted successfully');
-            if (this.clipboard.operation === 'cut') this.clipboard = null;
+          }, (res) => {
+            this.toast(`${op === 'cut' ? 'Moved' : 'Copied'} ${res.processed || count} item(s) successfully`);
+            if (op === 'cut') this.clipboard = null;
             this.updateClipboardUI();
             this.refresh();
+            if (pasteBtn) pasteBtn.disabled = false;
           });
+        }
+
+        pasteClipboard() {
+          this.pasteClipboardInto(this.currentPath || '');
         }
 
         copyDirectUrl(path) {
@@ -12563,6 +12617,15 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             : '<svg viewBox="0 0 24 24"><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"/></svg>';
 
           if (type === 'folder') {
+            if (this.clipboard && this.clipboard.items && this.clipboard.items.length > 0) {
+              const op = this.clipboard.operation === 'cut' ? 'Move' : 'Paste';
+              addItem('<svg viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z"/></svg>', `${op} into this folder`, () => {
+                this.pasteClipboardInto(path);
+              });
+              const sep = document.createElement('div');
+              sep.className = 'dm-sep';
+              this.contextMenu.appendChild(sep);
+            }
             addItem('<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>', 'Preview / Open', () => this.navigate(path));
             addItem('<svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>', 'Open in a new tab', () => this.openInNewTab(path, 'folder'));
             addItem('<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Download', () => this.downloadZipWithProgress(`?action=download_zip&dir=${encodeURIComponent(path)}`, null, `${name}.zip`));
