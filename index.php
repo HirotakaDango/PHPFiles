@@ -8242,19 +8242,30 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           const tile = document.createElement('div');
           tile.className = `lb-carousel-item ${index === this.currentIndex ? 'active' : ''}`;
           tile.dataset.index = index;
+          tile.style.position = 'relative';
 
           const ext = (item.name ? item.name.split('.').pop() : '').toLowerCase();
+          const isVid = item.type === 'video' || ['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi', 'ts', '3gp', 'wmv', 'flv'].includes(ext);
           const isImage = item.type === 'image' || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(ext);
 
-          if (isImage) {
-            tile.innerHTML = `<img src="?action=thumb&f=${encodeURIComponent(item.path)}" loading="lazy" decoding="async" alt="">`;
-          } else {
-            const isVid = item.type === 'video' || ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
-            tile.innerHTML = `
-              <div class="lb-carousel-icon">
-                <svg viewBox="0 0 24 24"><path d="${isVid ? 'M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z' : 'M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z'}"/></svg>
-              </div>`;
+          let fallbackIconSvg = '<svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg>';
+          if (isVid) {
+            fallbackIconSvg = '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>';
+          } else if (isImage) {
+            fallbackIconSvg = '<svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>';
           }
+
+          const thumbUrl = `?action=thumb&f=${encodeURIComponent(item.path)}`;
+          const onErrorLogic = isVid 
+            ? `if(!this.dataset.tried){this.dataset.tried=true; window.app.captureVideoThumb(this, '${encodeURIComponent(item.path)}');}else{this.remove();}` 
+            : `this.remove();`;
+
+          tile.innerHTML = `
+            <div class="lb-carousel-icon" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:1;">
+              ${fallbackIconSvg}
+            </div>
+            <img src="${thumbUrl}" loading="lazy" decoding="async" alt="" style="position:relative; z-index:2; width:100%; height:100%; object-fit:cover; display:block; background-color:#1a1a1a;" onerror="${onErrorLogic}">
+          `;
 
           tile.addEventListener('click', (e) => {
             e.stopPropagation();
