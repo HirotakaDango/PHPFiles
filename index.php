@@ -482,24 +482,82 @@ function getMediaMetadata($filePath) {
 
       $info = $getID3->analyze($filePath);
 
+      // Deep Tag Map Resolution across ID3v2, Vorbis, QuickTime, RIFF & Matroska
+      $tagMaps = [
+        'Track Title'   => ['title', 'track_title', 'song_title', 'nam'],
+        'Artist'        => ['artist', 'author', 'ART'],
+        'Album Artist'  => ['album_artist', 'albumartist', 'band', 'aART'],
+        'Album'         => ['album', 'alb'],
+        'Track #'       => ['track_number', 'tracknumber', 'track', 'trkn'],
+        'Disc #'        => ['disc_number', 'discnumber', 'disc', 'disk'],
+        'Year'          => ['year', 'date', 'creation_date', 'recording_time', 'day'],
+        'Genre'         => ['genre', 'gen'],
+        'Composer'      => ['composer', 'writer', 'wrt'],
+        'Publisher'     => ['publisher', 'label', 'organization', 'pub'],
+        'Copyright'     => ['copyright', 'cprt', 'cpy'],
+        'BPM'           => ['bpm', 'tempo'],
+        'Comment'       => ['comment', 'description', 'cmt', 'des'],
+      ];
+
+      $allComments = [];
       if (!empty($info['comments'])) {
-        if (!empty($info['comments']['title'][0])) $meta['tags']['Track Title'] = trim($info['comments']['title'][0]);
-        if (!empty($info['comments']['artist'][0])) $meta['tags']['Artist'] = trim($info['comments']['artist'][0]);
-        if (!empty($info['comments']['album'][0])) $meta['tags']['Album'] = trim($info['comments']['album'][0]);
-        if (!empty($info['comments']['year'][0])) $meta['tags']['Year'] = trim($info['comments']['year'][0]);
-        if (!empty($info['comments']['genre'][0])) $meta['tags']['Genre'] = trim($info['comments']['genre'][0]);
+        $allComments[] = $info['comments'];
+      }
+      if (!empty($info['tags'])) {
+        foreach ($info['tags'] as $fmtTags) {
+          if (is_array($fmtTags)) $allComments[] = $fmtTags;
+        }
+      }
+
+      foreach ($tagMaps as $label => $keys) {
+        foreach ($allComments as $commentGroup) {
+          foreach ($keys as $k) {
+            if (!empty($commentGroup[$k])) {
+              $val = is_array($commentGroup[$k]) ? $commentGroup[$k][0] : $commentGroup[$k];
+              if (is_string($val) && trim($val) !== '') {
+                $meta['tags'][$label] = trim($val);
+                break 2;
+              }
+            }
+          }
+        }
       }
 
       if (!empty($info['playtime_seconds'])) {
         $meta['tags']['Duration'] = formatDuration($info['playtime_seconds']);
       }
 
+      // Video Stream Metadata
       if (!empty($info['video']['resolution_x']) && !empty($info['video']['resolution_y'])) {
         $meta['tags']['Resolution'] = $info['video']['resolution_x'] . ' × ' . $info['video']['resolution_y'] . ' px';
       }
+      if (!empty($info['video']['codec']) || !empty($info['video']['dataformat'])) {
+        $meta['tags']['Video Codec'] = strtoupper($info['video']['codec'] ?? $info['video']['dataformat']);
+      }
+      if (!empty($info['video']['frame_rate'])) {
+        $meta['tags']['Frame Rate'] = round($info['video']['frame_rate'], 2) . ' fps';
+      }
+      if (!empty($info['video']['bitrate'])) {
+        $meta['tags']['Video Bitrate'] = round($info['video']['bitrate'] / 1000) . ' kbps';
+      }
 
+      // Audio Stream Metadata
+      if (!empty($info['audio']['codec']) || !empty($info['audio']['dataformat'])) {
+        $meta['tags']['Audio Codec'] = strtoupper($info['audio']['codec'] ?? $info['audio']['dataformat']);
+      }
+      if (!empty($info['audio']['bitrate'])) {
+        $brMode = !empty($info['audio']['bitrate_mode']) ? ' (' . strtoupper($info['audio']['bitrate_mode']) . ')' : '';
+        $meta['tags']['Audio Bitrate'] = round($info['audio']['bitrate'] / 1000) . ' kbps' . $brMode;
+      }
+      if (!empty($info['audio']['channels'])) {
+        $ch = (int)$info['audio']['channels'];
+        $meta['tags']['Channels'] = ($ch === 2) ? 'Stereo (2 ch)' : (($ch === 1) ? 'Mono (1 ch)' : "{$ch} Channels");
+      }
       if (!empty($info['audio']['sample_rate'])) {
         $meta['tags']['Sample Rate'] = number_format($info['audio']['sample_rate']) . ' Hz';
+      }
+      if (!empty($info['audio']['bits_per_sample'])) {
+        $meta['tags']['Bit Depth'] = $info['audio']['bits_per_sample'] . '-bit';
       }
 
       $coverData = null;
@@ -543,7 +601,21 @@ function getMediaMetadata($filePath) {
           $data = fread($fp, $tagSize);
           $len = strlen($data);
           $pos = 0;
-          $tagMap = ['TIT2' => 'Track Title', 'TPE1' => 'Artist', 'TALB' => 'Album', 'TYER' => 'Year', 'TDRC' => 'Year', 'TCON' => 'Genre', 'TRCK' => 'Track #'];
+          $tagMap = [
+            'TIT2' => 'Track Title',
+            'TPE1' => 'Artist',
+            'TPE2' => 'Album Artist',
+            'TALB' => 'Album',
+            'TRCK' => 'Track #',
+            'TPOS' => 'Disc #',
+            'TYER' => 'Year',
+            'TDRC' => 'Year',
+            'TCON' => 'Genre',
+            'TCOM' => 'Composer',
+            'TPUB' => 'Publisher',
+            'TCOP' => 'Copyright',
+            'TBPM' => 'BPM'
+          ];
 
           while ($pos + 10 < $len) {
             $frameId = substr($data, $pos, 4);
@@ -630,7 +702,19 @@ function getMediaMetadata($filePath) {
           if ($ilst !== false) {
             $pos = $ilst + 4;
             $end = strlen($moov);
-            $tagMap = ["\xa9nam" => 'Track Title', "\xa9ART" => 'Artist', "\xa9alb" => 'Album', "\xa9day" => 'Year', "\xa9gen" => 'Genre'];
+            $tagMap = [
+              "\xa9nam" => 'Track Title',
+              "\xa9ART" => 'Artist',
+              "aART"    => 'Album Artist',
+              "\xa9alb" => 'Album',
+              "\xa9day" => 'Year',
+              "\xa9gen" => 'Genre',
+              "\xa9wrt" => 'Composer',
+              "\xa9pub" => 'Publisher',
+              "\xa9cpy" => 'Copyright',
+              "\xa9cmt" => 'Comment',
+              "trkn"    => 'Track #'
+            ];
             while ($pos + 8 < $end) {
               $sz = unpack('N', substr($moov, $pos, 4))[1];
               $type = substr($moov, $pos + 4, 4);
@@ -685,7 +769,23 @@ function getMediaMetadata($filePath) {
           if ($p + 4 <= strlen($block)) {
             $n = unpack('V', substr($block, $p, 4))[1];
             $p += 4;
-            $fMap = ['TITLE' => 'Track Title', 'ARTIST' => 'Artist', 'ALBUM' => 'Album', 'DATE' => 'Year', 'GENRE' => 'Genre'];
+            $fMap = [
+              'TITLE'       => 'Track Title',
+              'ARTIST'      => 'Artist',
+              'ALBUMARTIST' => 'Album Artist',
+              'ALBUM ARTIST'=> 'Album Artist',
+              'ALBUM'       => 'Album',
+              'TRACKNUMBER' => 'Track #',
+              'DISCNUMBER'  => 'Disc #',
+              'DATE'        => 'Year',
+              'YEAR'        => 'Year',
+              'GENRE'       => 'Genre',
+              'COMPOSER'    => 'Composer',
+              'PUBLISHER'   => 'Publisher',
+              'COPYRIGHT'   => 'Copyright',
+              'COMMENT'     => 'Comment',
+              'BPM'         => 'BPM'
+            ];
             for ($i = 0; $i < $n && $p + 4 <= strlen($block); $i++) {
               $cl = unpack('V', substr($block, $p, 4))[1];
               $p += 4;
@@ -839,12 +939,13 @@ function streamRangeFile($path, $mime) {
   header('Content-Type: ' . $mime);
   header('Accept-Ranges: bytes');
   header('Content-Length: ' . sprintf('%.0f', $length));
+  header('X-Accel-Buffering: no');
+  header('X-Content-Type-Options: nosniff');
   $fn = basename($path);
   $fallbackFn = preg_replace('/[^\x20-\x7e]/', '_', $fn) ?: 'file';
   header("Content-Disposition: inline; filename=\"{$fallbackFn}\"; filename*=UTF-8''" . rawurlencode($fn));
-  header('Cache-Control: public, max-age=604800, immutable');
+  header('Cache-Control: public, max-age=31536000, immutable');
   header('Content-Transfer-Encoding: binary');
-  header('X-Content-Type-Options: nosniff');
 
   $fp = @fopen($path, 'rb');
   if ($fp) {
@@ -853,7 +954,7 @@ function streamRangeFile($path, $mime) {
       @fseek($fp, (int)$start, SEEK_SET);
     }
     $bytesLeft = $length;
-    $bufferSize = 512 * 1024; // 512KB for smooth 60fps streaming on low-end hardware
+    $bufferSize = ($length <= 2) ? 2 : 256 * 1024; // Instant Safari byte-probe + 256KB low-latency chunks
     while (!feof($fp) && $bytesLeft > 0) {
       if (connection_aborted()) break;
       $read = (int)min($bufferSize, $bytesLeft);
@@ -1203,12 +1304,15 @@ if ($action) {
     ]);
   }
 
-  if ($action === 'gallery_list') {
+  if ($action === 'gallery_list' || $action === 'video_list' || $action === 'audio_list') {
     $maxResults = 2000;
     $foundFiles = [];
     $rootLen = strlen(realpath($config['root_dir']));
     $cacheReal = realpath($config['cache_dir']);
     $trashReal = realpath($config['trash_dir']);
+
+    $targetType = ($action === 'video_list') ? 'video' : (($action === 'audio_list') ? 'audio' : 'image');
+    $targetExts = ($targetType === 'video') ? $config['video_extensions'] : (($targetType === 'audio') ? $config['audio_extensions'] : $config['image_extensions']);
 
     $flags = FilesystemIterator::SKIP_DOTS | FilesystemIterator::FOLLOW_SYMLINKS;
     $dirIterator = new RecursiveDirectoryIterator($config['root_dir'], $flags);
@@ -1225,12 +1329,14 @@ if ($action) {
     $iterator->setMaxDepth(10);
 
     $count = 0;
+    $totalBytes = 0;
     foreach ($iterator as $item) {
       if ($item->isDir()) continue;
       $ext = strtolower($item->getExtension());
-      if (in_array($ext, $config['image_extensions'])) {
+      if (in_array($ext, $targetExts)) {
         if ($count >= $maxResults) break;
         $size = $item->getSize();
+        $totalBytes += $size;
         $rel = ltrim(str_replace(['\\', '//'], '/', substr($item->getRealPath(), $rootLen)), '/');
         $foundFiles[] = [
           'name'     => $item->getFilename(),
@@ -1239,7 +1345,7 @@ if ($action) {
           'size_fmt' => formatBytes($size),
           'mtime'    => $item->getMTime(),
           'ext'      => $ext,
-          'type'     => 'image',
+          'type'     => $targetType,
           'width'    => 0,
           'height'   => 0
         ];
@@ -1252,7 +1358,7 @@ if ($action) {
     jsonResponse([
       'folders' => [],
       'files'   => $foundFiles,
-      'stats'   => ['files' => count($foundFiles), 'folders' => 0, 'total_size' => '']
+      'stats'   => ['files' => count($foundFiles), 'folders' => 0, 'total_size' => formatBytes($totalBytes)]
     ]);
   }
 
@@ -1313,14 +1419,12 @@ if ($action) {
         }
       }
 
-      // Video Frame Snapshot using server FFmpeg if available
+      // Aggressively optimized single-pass multi-threaded video frame capture
       if (!file_exists($cachePath) && in_array($ext, $config['video_extensions']) && function_exists('exec')) {
-        $tmpSnap = tempnam(sys_get_temp_dir(), 'vsnap_') . '.jpg';
-        @exec("ffmpeg -ss 00:00:01 -i " . escapeshellarg($fullPath) . " -vframes 1 -q:v 2 " . escapeshellarg($tmpSnap) . " 2>&1");
-        if (file_exists($tmpSnap) && filesize($tmpSnap) > 0) {
-          createThumbnail($tmpSnap, $cachePath, $config['thumb_size'], $config['thumb_quality']);
-          @unlink($tmpSnap);
-        }
+        $escSrc = escapeshellarg($fullPath);
+        $escCache = escapeshellarg($cachePath);
+        $thumbSize = (int)$config['thumb_size'];
+        @exec("ffmpeg -ss 00:00:01 -noaccurate_seek -i {$escSrc} -vframes 1 -an -sn -threads 2 -vf \"scale='min({$thumbSize},iw)':-2\" -q:v 3 -y {$escCache} 2>&1");
       }
 
       if (!file_exists($cachePath) && in_array($ext, $config['image_extensions'])) {
@@ -4809,6 +4913,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
         border-radius: 28px;
         width: 100%;
         max-width: 480px;
+        max-height: 88dvh;
+        max-height: calc(100dvh - 2rem);
         box-shadow: var(--md-elevation-2);
         overflow: hidden;
         display: flex;
@@ -6184,6 +6290,12 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             </div>
             <div class="filter-item" id="nav-gallery" onclick="app.switchDriveSection('gallery')">
               <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z"/></svg> Gallery</span>
+            </div>
+            <div class="filter-item" id="nav-videos" onclick="app.switchDriveSection('videos')">
+              <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg> Videos</span>
+            </div>
+            <div class="filter-item" id="nav-audio" onclick="app.switchDriveSection('audio')">
+              <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg> Audio</span>
             </div>
             <div class="filter-item" id="nav-recents" onclick="app.switchDriveSection('recents')">
               <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg> Recents</span>
@@ -7817,17 +7929,36 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             }
           }, { passive: true });
 
-          // Keyboard Navigation
+          // Keyboard Navigation & Fast Media Controls
           window.addEventListener('keydown', (e) => {
             if (!this.el.classList.contains('active')) return;
-            if (e.key === 'Escape') this.close();
-            if (e.key === 'ArrowLeft') { this.resetTransform(true); this.nav(-1); }
-            if (e.key === 'ArrowRight') { this.resetTransform(true); this.nav(1); }
-            if (e.key === ' ' && (e.target === document.body || e.target === this.el)) {
-              const vid = this.body.querySelector('video, audio');
-              if (vid) {
+            const mediaEl = this.body.querySelector('video, audio');
+
+            if (e.key === 'Escape') {
+              this.close();
+            } else if (e.key === ' ' && (e.target === document.body || e.target === this.el || e.target === mediaEl)) {
+              if (mediaEl) {
                 e.preventDefault();
-                if (vid.paused) vid.play(); else vid.pause();
+                if (mediaEl.paused) mediaEl.play(); else mediaEl.pause();
+              }
+            } else if (e.key.toLowerCase() === 'm' && mediaEl) {
+              e.preventDefault();
+              mediaEl.muted = !mediaEl.muted;
+            } else if (e.key === 'ArrowLeft') {
+              if (mediaEl && !mediaEl.paused) {
+                e.preventDefault();
+                mediaEl.currentTime = Math.max(0, mediaEl.currentTime - 5);
+              } else {
+                this.resetTransform(true);
+                this.nav(-1);
+              }
+            } else if (e.key === 'ArrowRight') {
+              if (mediaEl && !mediaEl.paused) {
+                e.preventDefault();
+                mediaEl.currentTime = Math.min(mediaEl.duration || 0, mediaEl.currentTime + 5);
+              } else {
+                this.resetTransform(true);
+                this.nav(1);
               }
             }
           });
@@ -8321,21 +8452,21 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           if (!this.mediaList || this.mediaList.length <= 1) return;
           const indices = [];
           const len = this.mediaList.length;
-          for (let offset = -3; offset <= 3; offset++) {
+          for (let offset = -2; offset <= 2; offset++) {
             if (offset === 0) continue;
-            const targetIdx = (this.currentIndex + offset + len * 3) % len;
+            const targetIdx = (this.currentIndex + offset + len * 2) % len;
             if (!indices.includes(targetIdx)) {
               indices.push(targetIdx);
             }
           }
+          // Only preload image decodes and audio/video thumbnail covers (never full video streams)
           indices.forEach(idx => {
             const item = this.mediaList[idx];
             if (item) {
               const ext = (item.name ? item.name.split('.').pop() : '').toLowerCase();
-              if (item.type === 'image' || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(ext)) {
-                const img = new Image();
-                img.src = `?action=raw&f=${encodeURIComponent(item.path)}`;
-              }
+              const isImg = item.type === 'image' || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(ext);
+              const img = new Image();
+              img.src = isImg ? `?action=raw&f=${encodeURIComponent(item.path)}` : `?action=thumb&f=${encodeURIComponent(item.path)}`;
             }
           });
         }
@@ -9536,10 +9667,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           try { decoded = decodeURIComponent(raw); } catch (e) { decoded = raw; }
           decoded = decoded.replace(/^\/+|\/+$/g, '').replace(/\.part$/i, '');
 
-          // Distinguish special virtual tabs (@gallery, @recents, etc.) from physical folders
+          // Distinguish special virtual tabs (@gallery, @videos, @audio, @recents, etc.) from physical folders
           if (decoded.startsWith('@')) {
             const secName = decoded.substring(1).toLowerCase();
-            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
+            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio'];
             if (specialSections.includes(secName)) {
               if (window.lightbox && lightbox.el && lightbox.el.classList.contains('active')) {
                 lightbox.close(false);
@@ -9576,7 +9707,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
               return;
             }
 
-            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
+            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio'];
             if (this.currentSection && specialSections.includes(this.currentSection)) {
               this.originSection = this.currentSection;
               this.openFile(targetFile, false);
@@ -10037,7 +10168,13 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.dirTitle.innerText = 'Trash Bin';
           } else if (this.currentSection === 'gallery') {
             this.dirTitle.innerText = 'Gallery';
-            this.dirStats.innerText = `${filteredFiles.length} Photos`;
+            this.dirStats.innerText = `${filteredFiles.length} Photos (${this.data.stats?.total_size || '0 B'})`;
+          } else if (this.currentSection === 'videos') {
+            this.dirTitle.innerText = 'Videos';
+            this.dirStats.innerText = `${filteredFiles.length} Videos (${this.data.stats?.total_size || '0 B'})`;
+          } else if (this.currentSection === 'audio') {
+            this.dirTitle.innerText = 'Audio';
+            this.dirStats.innerText = `${filteredFiles.length} Audio Tracks (${this.data.stats?.total_size || '0 B'})`;
           } else {
             this.dirTitle.innerText = this.data.path ? this.data.path.split('/').pop() : this.appTitle;
             this.dirStats.innerText = `${filteredFolders.length} Folders, ${filteredFiles.length} Files (${this.data.stats?.total_size || '0 B'})`;
@@ -10648,6 +10785,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             html += `<span class="bc-sep">/</span><a href="#/@trash" class="bc-item active">Trash Bin</a>`;
           } else if (this.currentSection === 'gallery') {
             html += `<span class="bc-sep">/</span><a href="#/@gallery" class="bc-item active">Gallery</a>`;
+          } else if (this.currentSection === 'videos') {
+            html += `<span class="bc-sep">/</span><a href="#/@videos" class="bc-item active">Videos</a>`;
+          } else if (this.currentSection === 'audio') {
+            html += `<span class="bc-sep">/</span><a href="#/@audio" class="bc-item active">Audio</a>`;
           } else if (this.currentPath) {
             const parts = this.currentPath.split('/');
             let accum = '';
@@ -10677,29 +10818,79 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
         captureVideoThumb(imgEl, encodedPath) {
           if (!imgEl) return;
+          if (!this.vThumbQueue) {
+            this.vThumbQueue = [];
+            this.vThumbActive = 0;
+            this.vThumbMax = 3; // Maximum 3 concurrent hardware decoding pipelines
+            this.vThumbCanvas = document.createElement('canvas');
+          }
+
+          this.vThumbQueue.push({ imgEl, encodedPath });
+          this.processVideoThumbQueue();
+        }
+
+        processVideoThumbQueue() {
+          if (this.vThumbActive >= this.vThumbMax || !this.vThumbQueue.length) return;
+          const { imgEl, encodedPath } = this.vThumbQueue.shift();
+          if (!imgEl || !imgEl.isConnected) {
+            return this.processVideoThumbQueue();
+          }
+
+          this.vThumbActive++;
           const video = document.createElement('video');
-          video.src = `?action=raw&f=${encodedPath}#t=0.8`;
-          video.crossOrigin = 'anonymous';
+          video.preload = 'metadata';
           video.muted = true;
           video.playsInline = true;
-          video.preload = 'metadata';
+          video.crossOrigin = 'anonymous';
+
+          const cleanup = () => {
+            video.onloadeddata = null;
+            video.onerror = null;
+            video.onseeked = null;
+            video.removeAttribute('src');
+            video.load();
+            video.remove();
+            this.vThumbActive--;
+            this.processVideoThumbQueue();
+          };
+
+          const timeoutId = setTimeout(() => {
+            imgEl.remove();
+            cleanup();
+          }, 6000);
 
           video.onloadeddata = () => {
             try {
-              const canvas = document.createElement('canvas');
-              canvas.width = Math.min(480, video.videoWidth || 320);
-              canvas.height = Math.min(480, video.videoHeight || 240);
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              video.currentTime = Math.min(0.8, (video.duration || 1) / 2);
+            } catch(e) {}
+          };
+
+          video.onseeked = () => {
+            clearTimeout(timeoutId);
+            try {
+              const canvas = this.vThumbCanvas;
+              const w = Math.min(480, video.videoWidth || 320);
+              const h = Math.round(w * ((video.videoHeight || 240) / (video.videoWidth || 320)));
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+              ctx.drawImage(video, 0, 0, w, h);
               imgEl.src = canvas.toDataURL('image/jpeg', 0.82);
               imgEl.style.opacity = '1';
               imgEl.closest('.file-card')?.classList.add('has-image');
-              video.remove();
             } catch (e) {
               imgEl.remove();
             }
+            cleanup();
           };
-          video.onerror = () => { imgEl.remove(); };
+
+          video.onerror = () => {
+            clearTimeout(timeoutId);
+            imgEl.remove();
+            cleanup();
+          };
+
+          video.src = `?action=raw&f=${encodedPath}`;
         }
 
         updateBadges() {
@@ -11671,7 +11862,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           this.currentSection = section;
           this.sidebar.classList.remove('open');
           this.sidebarBackdrop.classList.remove('active');
-          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash, #nav-gallery').forEach(el => el.classList.remove('active'));
+          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash, #nav-gallery, #nav-videos, #nav-audio').forEach(el => el.classList.remove('active'));
           document.getElementById(`nav-${section}`)?.classList.add('active');
 
           this.filter = 'all';
@@ -11693,6 +11884,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.loadTrash();
           } else if (section === 'gallery') {
             this.loadGallery();
+          } else if (section === 'videos') {
+            this.loadVideos();
+          } else if (section === 'audio') {
+            this.loadAudio();
           }
         }
 
@@ -11718,13 +11913,83 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.data = {
               folders: [],
               files: data.files || [],
-              stats: { total_size: '', files: (data.files || []).length, folders: 0 },
+              stats: data.stats || { total_size: '', files: (data.files || []).length, folders: 0 },
               path: ''
             };
             this.renderGallery();
             this.updateBreadcrumbs();
             this.updateBadges();
             this.updateDocTitle('Gallery', this.data.files.length);
+          } catch (e) {
+            if (seq !== this.navSeq) return;
+            this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
+          }
+        }
+
+        async loadVideos() {
+          const seq = ++this.navSeq;
+          this.currentSection = 'videos';
+          this.updateControlsVisibility();
+          this.currentPath = '';
+          this.selectedItems.clear();
+          this.updateBatchBar();
+          this.renderLimit = 25;
+          this.isSearching = false;
+          this.dirTitle.innerText = 'Videos';
+          this.dirStats.innerText = 'All videos across your drive';
+          this.container.style.opacity = '1';
+          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg><div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading videos...</div></div>';
+
+          try {
+            const res = await fetch('?action=video_list');
+            if (seq !== this.navSeq) return;
+            const data = await res.json();
+            if (seq !== this.navSeq) return;
+            this.data = {
+              folders: [],
+              files: data.files || [],
+              stats: data.stats || { total_size: '', files: (data.files || []).length, folders: 0 },
+              path: ''
+            };
+            this.renderGallery();
+            this.updateBreadcrumbs();
+            this.updateBadges();
+            this.updateDocTitle('Videos', this.data.files.length);
+          } catch (e) {
+            if (seq !== this.navSeq) return;
+            this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
+          }
+        }
+
+        async loadAudio() {
+          const seq = ++this.navSeq;
+          this.currentSection = 'audio';
+          this.updateControlsVisibility();
+          this.currentPath = '';
+          this.selectedItems.clear();
+          this.updateBatchBar();
+          this.renderLimit = 25;
+          this.isSearching = false;
+          this.dirTitle.innerText = 'Audio';
+          this.dirStats.innerText = 'All audio tracks across your drive';
+          this.container.style.opacity = '1';
+          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg><div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading audio...</div></div>';
+
+          try {
+            const res = await fetch('?action=audio_list');
+            if (seq !== this.navSeq) return;
+            const data = await res.json();
+            if (seq !== this.navSeq) return;
+            this.data = {
+              folders: [],
+              files: data.files || [],
+              stats: data.stats || { total_size: '', files: (data.files || []).length, folders: 0 },
+              path: ''
+            };
+            this.renderGallery();
+            this.updateBreadcrumbs();
+            this.updateBadges();
+            this.updateDocTitle('Audio', this.data.files.length);
           } catch (e) {
             if (seq !== this.navSeq) return;
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
@@ -12905,16 +13170,21 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           }
 
           if (res.media && res.media.tags && Object.keys(res.media.tags).length) {
+            const hasVideo = !!(res.media.tags['Resolution'] || res.media.tags['Video Codec'] || res.media.tags['Frame Rate']);
+            const mediaIcon = hasVideo
+              ? '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>'
+              : '<svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg>';
+
             html += `
               <div class="details-section">
                 <div class="details-title">
-                  <svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg>
-                  Media & Track Info
+                  ${mediaIcon}
+                  ${hasVideo ? 'Video & Audio Stream Info' : 'Audio & Track Metadata'}
                 </div>
                 <div class="details-grid">
             `;
             for (let k in res.media.tags) {
-              html += `<div class="details-row"><span class="details-label">${k}</span><span class="details-value">${res.media.tags[k]}</span></div>`;
+              html += `<div class="details-row"><span class="details-label">${this.escapeHtml(k)}</span><span class="details-value">${this.escapeHtml(String(res.media.tags[k]))}</span></div>`;
             }
             html += `</div></div>`;
           }
@@ -13124,8 +13394,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             return;
           }
 
-          // If opened from a dedicated section (recents, starred, activity, trash, gallery), return to it
-          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery'];
+          // If opened from a dedicated section (recents, starred, activity, trash, gallery, videos, audio), return to it
+          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio'];
           const returnSection = (this.originSection && specialSections.includes(this.originSection))
             ? this.originSection
             : (this.currentSection && specialSections.includes(this.currentSection) ? this.currentSection : null);
