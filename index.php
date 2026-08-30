@@ -1304,15 +1304,26 @@ if ($action) {
     ]);
   }
 
-  if ($action === 'gallery_list' || $action === 'video_list' || $action === 'audio_list') {
+  if ($action === 'gallery_list' || $action === 'video_list' || $action === 'audio_list' || $action === 'document_list') {
     $maxResults = 2000;
     $foundFiles = [];
     $rootLen = strlen(realpath($config['root_dir']));
     $cacheReal = realpath($config['cache_dir']);
     $trashReal = realpath($config['trash_dir']);
 
-    $targetType = ($action === 'video_list') ? 'video' : (($action === 'audio_list') ? 'audio' : 'image');
-    $targetExts = ($targetType === 'video') ? $config['video_extensions'] : (($targetType === 'audio') ? $config['audio_extensions'] : $config['image_extensions']);
+    $targetType = 'image';
+    $targetExts = $config['image_extensions'];
+    if ($action === 'video_list') {
+      $targetType = 'video';
+      $targetExts = $config['video_extensions'];
+    } elseif ($action === 'audio_list') {
+      $targetType = 'audio';
+      $targetExts = $config['audio_extensions'];
+    } elseif ($action === 'document_list') {
+      $targetType = 'document';
+      $docOfficeExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf', 'pages', 'ai', 'psd'];
+      $targetExts = array_values(array_unique(array_merge($config['text_extensions'], $config['archive_extensions'], $docOfficeExts)));
+    }
 
     $flags = FilesystemIterator::SKIP_DOTS | FilesystemIterator::FOLLOW_SYMLINKS;
     $dirIterator = new RecursiveDirectoryIterator($config['root_dir'], $flags);
@@ -6297,6 +6308,9 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             <div class="filter-item" id="nav-audio" onclick="app.switchDriveSection('audio')">
               <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg> Audio</span>
             </div>
+            <div class="filter-item" id="nav-documents" onclick="app.switchDriveSection('documents')">
+              <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg> Documents</span>
+            </div>
             <div class="filter-item" id="nav-recents" onclick="app.switchDriveSection('recents')">
               <span style="display:flex;align-items:center;gap:0.5rem;"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg> Recents</span>
             </div>
@@ -9083,19 +9097,27 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
               this.dropdownGridAdjust.style.right = `${window.innerWidth - rect.right}px`;
               this.dropdownGridAdjust.classList.toggle('active');
             });
-
-            // Prevent any mouse, touch or pointer event inside the dropdown from bubbling and closing it
-            ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'pointerdown', 'pointerup'].forEach(evt => {
-              this.dropdownGridAdjust.addEventListener(evt, e => e.stopPropagation());
-            });
           }
 
-          const mobGridContainer = document.getElementById('mobile-grid-adjust-container');
-          if (mobGridContainer) {
-            ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'pointerdown', 'pointerup'].forEach(evt => {
-              mobGridContainer.addEventListener(evt, e => e.stopPropagation());
-            });
-          }
+          // Isolate all slider and dropdown interactions from window closing listeners
+          const isolatedElements = [
+            this.dropdownGridAdjust,
+            this.dropdownMore,
+            document.getElementById('mobile-grid-adjust-container'),
+            this.sliderCols, this.sliderGap, this.sliderRadius,
+            this.sliderColsMob, this.sliderGapMob, this.sliderRadiusMob
+          ];
+          isolatedElements.forEach(el => {
+            if (el) {
+              ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'pointerdown', 'pointerup', 'input', 'change'].forEach(evt => {
+                el.addEventListener(evt, e => {
+                  if (!e.target.closest('.dm-item:not(#btn-reset-grid-adjust):not(#btn-reset-grid-adjust-mob)')) {
+                    e.stopPropagation();
+                  }
+                });
+              });
+            }
+          });
 
           if (this.sliderCols) {
             this.sliderCols.value = this.gridCols;
@@ -9504,10 +9526,14 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
     
         applyGridSizing(recalcColumns = false) {
           const text = this.gridCols > 0 ? `${this.gridCols}` : 'Auto';
-          if (this.gridCols > 0) {
-            this.container.setAttribute('data-cols', this.gridCols);
-          } else {
-            this.container.removeAttribute('data-cols');
+          if (this.container) {
+            if (this.gridCols > 0 && this.layout !== 'list' && this.currentSection !== 'activity' && this.currentSection !== 'trash') {
+              this.container.setAttribute('data-cols', this.gridCols);
+            } else {
+              this.container.removeAttribute('data-cols');
+            }
+            this.container.style.setProperty('--grid-gap', `${this.gridGap}px`);
+            this.container.style.setProperty('--card-radius', `${this.gridRadius}px`);
           }
 
           if (this.sliderColsVal) this.sliderColsVal.innerText = text;
@@ -9526,11 +9552,6 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           if (this.sliderGapValMob) this.sliderGapValMob.innerText = `${this.gridGap}px`;
           if (this.sliderRadiusValMob) this.sliderRadiusValMob.innerText = `${this.gridRadius}px`;
 
-          // Direct instantaneous CSS variable interpolation without layout thrashing
-          if (this.container) {
-            this.container.style.setProperty('--grid-gap', `${this.gridGap}px`);
-            this.container.style.setProperty('--card-radius', `${this.gridRadius}px`);
-          }
           document.documentElement.style.setProperty('--grid-gap', `${this.gridGap}px`);
           document.documentElement.style.setProperty('--card-radius', `${this.gridRadius}px`);
 
@@ -9539,17 +9560,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.container.style.setProperty('--justified-row-height', heightMap[this.gridCols] || '200px');
           }
 
-          // Only rearrange DOM structure if column count itself was modified
-          if (recalcColumns && (this.layout === 'columns' || this.layout === 'justified')) {
-            this.renderLimit = 25;
-            this.renderGallery(true);
-          }
-
-          if (this.currentSection === 'activity' || this.currentSection === 'trash') {
-            return;
-          }
-
-          if (this.layout === 'columns' || this.layout === 'justified') {
+          if (recalcColumns && (this.layout === 'columns' || this.layout === 'justified') && this.currentSection !== 'activity' && this.currentSection !== 'trash') {
             this.renderLimit = 25;
             this.renderGallery(true);
           }
@@ -9670,7 +9681,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           // Distinguish special virtual tabs (@gallery, @videos, @audio, @recents, etc.) from physical folders
           if (decoded.startsWith('@')) {
             const secName = decoded.substring(1).toLowerCase();
-            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio'];
+            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio', 'documents'];
             if (specialSections.includes(secName)) {
               if (window.lightbox && lightbox.el && lightbox.el.classList.contains('active')) {
                 lightbox.close(false);
@@ -9707,7 +9718,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
               return;
             }
 
-            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio'];
+            const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio', 'documents'];
             if (this.currentSection && specialSections.includes(this.currentSection)) {
               this.originSection = this.currentSection;
               this.openFile(targetFile, false);
@@ -10115,6 +10126,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           this.updateControlsVisibility();
           this.container.style.opacity = '1';
           this.container.className = `gallery-container layout-${this.layout}`;
+          this.applyGridSizing(false);
           const toolbar = document.querySelector('.toolbar-actions');
           if (toolbar && this.currentSection !== 'trash' && this.currentSection !== 'activity') {
             toolbar.style.display = 'flex';
@@ -10175,6 +10187,9 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           } else if (this.currentSection === 'audio') {
             this.dirTitle.innerText = 'Audio';
             this.dirStats.innerText = `${filteredFiles.length} Audio Tracks (${this.data.stats?.total_size || '0 B'})`;
+          } else if (this.currentSection === 'documents') {
+            this.dirTitle.innerText = 'Documents & Archives';
+            this.dirStats.innerText = `${filteredFiles.length} Document(s) & Archive(s) (${this.data.stats?.total_size || '0 B'})`;
           } else {
             this.dirTitle.innerText = this.data.path ? this.data.path.split('/').pop() : this.appTitle;
             this.dirStats.innerText = `${filteredFolders.length} Folders, ${filteredFiles.length} Files (${this.data.stats?.total_size || '0 B'})`;
@@ -10789,6 +10804,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             html += `<span class="bc-sep">/</span><a href="#/@videos" class="bc-item active">Videos</a>`;
           } else if (this.currentSection === 'audio') {
             html += `<span class="bc-sep">/</span><a href="#/@audio" class="bc-item active">Audio</a>`;
+          } else if (this.currentSection === 'documents') {
+            html += `<span class="bc-sep">/</span><a href="#/@documents" class="bc-item active">Documents</a>`;
           } else if (this.currentPath) {
             const parts = this.currentPath.split('/');
             let accum = '';
@@ -11862,7 +11879,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           this.currentSection = section;
           this.sidebar.classList.remove('open');
           this.sidebarBackdrop.classList.remove('active');
-          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash, #nav-gallery, #nav-videos, #nav-audio').forEach(el => el.classList.remove('active'));
+          document.querySelectorAll('#nav-home, #nav-recents, #nav-starred, #nav-activity, #nav-trash, #nav-gallery, #nav-videos, #nav-audio, #nav-documents').forEach(el => el.classList.remove('active'));
           document.getElementById(`nav-${section}`)?.classList.add('active');
 
           this.filter = 'all';
@@ -11888,6 +11905,8 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.loadVideos();
           } else if (section === 'audio') {
             this.loadAudio();
+          } else if (section === 'documents') {
+            this.loadDocuments();
           }
         }
 
@@ -11990,6 +12009,41 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.updateBreadcrumbs();
             this.updateBadges();
             this.updateDocTitle('Audio', this.data.files.length);
+          } catch (e) {
+            if (seq !== this.navSeq) return;
+            this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
+          }
+        }
+
+        async loadDocuments() {
+          const seq = ++this.navSeq;
+          this.currentSection = 'documents';
+          this.updateControlsVisibility();
+          this.currentPath = '';
+          this.selectedItems.clear();
+          this.updateBatchBar();
+          this.renderLimit = 25;
+          this.isSearching = false;
+          this.dirTitle.innerText = 'Documents & Archives';
+          this.dirStats.innerText = 'All text, documents, code, and compressed files';
+          this.container.style.opacity = '1';
+          this.container.innerHTML = '<div class="center-state"><svg class="m3-spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle></svg><div style="font-size:0.85rem; color:var(--md-sys-color-on-surface-variant); font-weight:500;">Loading documents...</div></div>';
+
+          try {
+            const res = await fetch('?action=document_list');
+            if (seq !== this.navSeq) return;
+            const data = await res.json();
+            if (seq !== this.navSeq) return;
+            this.data = {
+              folders: [],
+              files: data.files || [],
+              stats: data.stats || { total_size: '', files: (data.files || []).length, folders: 0 },
+              path: ''
+            };
+            this.renderGallery();
+            this.updateBreadcrumbs();
+            this.updateBadges();
+            this.updateDocTitle('Documents', this.data.files.length);
           } catch (e) {
             if (seq !== this.navSeq) return;
             this.container.innerHTML = `<div class="center-state" style="color:var(--md-sys-color-error);"><p>${e.message}</p></div>`;
@@ -13395,7 +13449,7 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           }
 
           // If opened from a dedicated section (recents, starred, activity, trash, gallery, videos, audio), return to it
-          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio'];
+          const specialSections = ['recents', 'starred', 'activity', 'trash', 'gallery', 'videos', 'audio', 'documents'];
           const returnSection = (this.originSection && specialSections.includes(this.originSection))
             ? this.originSection
             : (this.currentSection && specialSections.includes(this.currentSection) ? this.currentSection : null);
