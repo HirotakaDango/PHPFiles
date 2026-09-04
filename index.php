@@ -4798,7 +4798,6 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
       .lightbox-media.reconstruct.ready {
         opacity: 1 !important;
         filter: none !important;
-        transform: translate3d(0, 0, 0) scale(1) !important;
       }
       .lightbox-audio-card {
         background: rgba(28, 25, 34, 0.85);
@@ -6616,6 +6615,12 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           <div class="lightbox-title" id="lb-title">image.jpg</div>
         </div>
         <div style="display:flex; gap:0.4rem; align-items:center;">
+          <button class="btn-icon" id="btn-lb-zoom-out" title="Zoom Out (-)">
+            <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-lb-zoom-in" title="Zoom In (+)">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
           <button class="btn-icon" id="btn-lb-slideshow" title="Play Slideshow (15s)">
             <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
           </button>
@@ -7856,6 +7861,16 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.close();
           });
 
+          document.getElementById('btn-lb-zoom-in')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.zoomIn();
+          });
+
+          document.getElementById('btn-lb-zoom-out')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.zoomOut();
+          });
+
           document.getElementById('btn-lb-slideshow')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.toggleSlideshow();
@@ -7953,6 +7968,15 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
             if (e.key === 'Escape') {
               this.close();
+            } else if (e.key === '+' || e.key === '=') {
+              e.preventDefault();
+              this.zoomIn();
+            } else if (e.key === '-' || e.key === '_') {
+              e.preventDefault();
+              this.zoomOut();
+            } else if (e.key === '0') {
+              e.preventDefault();
+              this.resetTransform(true);
             } else if (e.key === ' ' && (e.target === document.body || e.target === this.el || e.target === mediaEl)) {
               if (mediaEl) {
                 e.preventDefault();
@@ -8202,6 +8226,27 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           });
         }
 
+        zoomIn(factor = 1.35) {
+          const img = this.body.querySelector('.lightbox-media');
+          if (!img || img.tagName !== 'IMG') return;
+          this.scale = Math.min(5, this.scale * factor);
+          this.clampPan();
+          this.applyTransform(true);
+        }
+
+        zoomOut(factor = 1.35) {
+          const img = this.body.querySelector('.lightbox-media');
+          if (!img || img.tagName !== 'IMG') return;
+          this.scale = Math.max(1, this.scale / factor);
+          if (this.scale === 1) {
+            this.panX = 0;
+            this.panY = 0;
+          } else {
+            this.clampPan();
+          }
+          this.applyTransform(true);
+        }
+
         clampPan() {
           const img = this.body.querySelector('.lightbox-media');
           if (!img || this.scale <= 1) {
@@ -8209,11 +8254,21 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
             this.panY = 0;
             return;
           }
-          const rect = this.body.getBoundingClientRect();
-          const maxPanX = Math.max(0, (rect.width * this.scale - rect.width) / 2);
-          const maxPanY = Math.max(0, (rect.height * this.scale - rect.height) / 2);
+          const bodyRect = this.body.getBoundingClientRect();
+          const imgW = img.offsetWidth || bodyRect.width;
+          const imgH = img.offsetHeight || bodyRect.height;
+          const maxPanX = Math.max(0, (imgW * this.scale - bodyRect.width) / 2);
+          const maxPanY = Math.max(0, (imgH * this.scale - bodyRect.height) / 2);
           this.panX = Math.min(maxPanX, Math.max(-maxPanX, this.panX));
           this.panY = Math.min(maxPanY, Math.max(-maxPanY, this.panY));
+        }
+
+        applyTransform(smooth = false) {
+          const img = this.body.querySelector('.lightbox-media');
+          if (!img) return;
+          img.classList.toggle('smooth-zoom', smooth);
+          img.classList.toggle('zoomed', this.scale > 1);
+          img.style.setProperty('transform', `translate3d(${this.panX}px, ${this.panY}px, 0) scale(${this.scale})`, 'important');
         }
 
         applyTransform(smooth = false) {
@@ -8520,6 +8575,10 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
           const isAudio = item.type === 'audio' || ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma', 'm4r', 'mid', 'midi'].includes(ext);
           const isVideo = item.type === 'video' || ['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi', 'ts', '3gp', 'wmv', 'flv'].includes(ext);
 
+          const btnZoomIn = document.getElementById('btn-lb-zoom-in');
+          const btnZoomOut = document.getElementById('btn-lb-zoom-out');
+          if (btnZoomIn) btnZoomIn.style.display = isImage ? 'flex' : 'none';
+          if (btnZoomOut) btnZoomOut.style.display = isImage ? 'flex' : 'none';
           const btnSlideshow = document.getElementById('btn-lb-slideshow');
           if (btnSlideshow) btnSlideshow.style.display = isImage ? 'flex' : 'none';
           const btnSearchGoogle = document.getElementById('btn-lb-search-google');
