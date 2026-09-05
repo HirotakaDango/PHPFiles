@@ -824,16 +824,22 @@ function getMediaMetadata($filePath) {
 }
 
 function createThumbnail($src, $dest, $size, $quality) {
-  if (!file_exists($src)) return false;
+  if (!file_exists($src) || !is_readable($src)) return false;
+
+  $ext = strtolower(pathinfo($src, PATHINFO_EXTENSION));
+  if ($ext === 'svg') return false;
+
   $info = @getimagesize($src);
   if (!$info) return false;
 
   list($origW, $origH) = $info;
-  $mime = $info['mime'];
+  if ($origW <= 0 || $origH <= 0) return false;
+
+  $mime = $info['mime'] ?? '';
 
   $ratio = min($size / $origW, $size / $origH);
-  $newW = max(1, round($origW * $ratio));
-  $newH = max(1, round($origH * $ratio));
+  $newW = max(1, (int)round($origW * $ratio));
+  $newH = max(1, (int)round($origH * $ratio));
 
   $srcImg = false;
   switch ($mime) {
@@ -842,38 +848,51 @@ function createThumbnail($src, $dest, $size, $quality) {
     case 'image/gif':  $srcImg = @imagecreatefromgif($src); break;
     case 'image/webp': $srcImg = function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($src) : false; break;
     case 'image/avif': $srcImg = function_exists('imagecreatefromavif') ? @imagecreatefromavif($src) : false; break;
-    case 'image/bmp':  $srcImg = function_exists('imagecreatefrombmp') ? @imagecreatefrombmp($src) : false; break;
+    case 'image/bmp':
+    case 'image/x-ms-bmp': $srcImg = function_exists('imagecreatefrombmp') ? @imagecreatefrombmp($src) : false; break;
   }
   if (!$srcImg) return false;
 
   if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
     $exif = @exif_read_data($src);
     if (!empty($exif['Orientation'])) {
+      $rotated = false;
       switch ($exif['Orientation']) {
-        case 3: $srcImg = imagerotate($srcImg, 180, 0); break;
+        case 3: $rotated = imagerotate($srcImg, 180, 0); break;
         case 6:
-          $srcImg = imagerotate($srcImg, -90, 0);
+          $rotated = imagerotate($srcImg, -90, 0);
           list($origW, $origH) = [$origH, $origW];
           break;
         case 8:
-          $srcImg = imagerotate($srcImg, 90, 0);
+          $rotated = imagerotate($srcImg, 90, 0);
           list($origW, $origH) = [$origH, $origW];
           break;
       }
-      $ratio = min($size / $origW, $size / $origH);
-      $newW = max(1, round($origW * $ratio));
-      $newH = max(1, round($origH * $ratio));
+      if ($rotated !== false) {
+        imagedestroy($srcImg);
+        $srcImg = $rotated;
+        $ratio = min($size / $origW, $size / $origH);
+        $newW = max(1, (int)round($origW * $ratio));
+        $newH = max(1, (int)round($origH * $ratio));
+      }
     }
   }
 
   $destImg = imagecreatetruecolor($newW, $newH);
-  if ($mime === 'image/png' || $mime === 'image/webp') {
-    imagealphablending($destImg, false);
-    imagesavealpha($destImg, true);
-    $transparent = imagecolorallocatealpha($destImg, 255, 255, 255, 127);
-    imagefilledrectangle($destImg, 0, 0, $newW, $newH, $transparent);
+  if (!$destImg) {
+    imagedestroy($srcImg);
+    return false;
   }
+
+  // Pre-fill canvas with neutral dark container tone so transparent images blend cleanly
+  $bg = imagecolorallocate($destImg, 33, 31, 38);
+  imagefilledrectangle($destImg, 0, 0, $newW, $newH, $bg);
   imagecopyresampled($destImg, $srcImg, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+
+  $destDir = dirname($dest);
+  if (!is_dir($destDir)) {
+    @mkdir($destDir, 0777, true);
+  }
 
   $ok = imagejpeg($destImg, $dest, $quality);
   imagedestroy($srcImg);
@@ -1400,9 +1419,21 @@ if ($action) {
 
   if ($action === 'thumb') {
     $file = $_GET['f'] ?? '';
-    $fullPath = safePath($config['root_dir'], $file);
+    $fullPath = findRealFile($config['root_dir'], $file);
+    if (!$fullPath) $fullPath = safePath($config['root_dir'], $file);
+
     if (!$fullPath || !is_file($fullPath)) {
       header('HTTP/1.0 404 Not Found');
+      exit;
+    }
+
+    $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+
+    if ($ext === 'svg') {
+      while (ob_get_level() > 0) @ob_end_clean();
+      header('Content-Type: image/svg+xml');
+      header('Cache-Control: public, max-age=31536000, immutable');
+      readfile($fullPath);
       exit;
     }
 
@@ -1418,8 +1449,7 @@ if ($action) {
 
     $cachePath = $config['cache_dir'] . DIRECTORY_SEPARATOR . $hash . '.jpg';
 
-    if (!file_exists($cachePath)) {
-      $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+    if (!file_exists($cachePath) || filesize($cachePath) === 0) {
       if (in_array($ext, ['mp3', 'm4a', 'flac', 'mp4', 'mov', 'mkv', 'webm', 'ogg', 'wav', 'aac', 'opus', 'avi', 'ts', 'm4v'])) {
         $mediaMeta = getMediaMetadata($fullPath);
         if (!empty($mediaMeta['raw_cover'])) {
@@ -1430,30 +1460,28 @@ if ($action) {
         }
       }
 
-      // Aggressively optimized single-pass multi-threaded video frame capture
-      if (!file_exists($cachePath) && in_array($ext, $config['video_extensions']) && function_exists('exec')) {
+      if ((!file_exists($cachePath) || filesize($cachePath) === 0) && in_array($ext, $config['video_extensions']) && function_exists('exec')) {
         $escSrc = escapeshellarg($fullPath);
         $escCache = escapeshellarg($cachePath);
         $thumbSize = (int)$config['thumb_size'];
         @exec("ffmpeg -ss 00:00:01 -noaccurate_seek -i {$escSrc} -vframes 1 -an -sn -threads 2 -vf \"scale='min({$thumbSize},iw)':-2\" -q:v 3 -y {$escCache} 2>&1");
       }
 
-      if (!file_exists($cachePath) && in_array($ext, $config['image_extensions'])) {
-        createThumbnail($fullPath, $cachePath, $config['thumb_size'], $config['thumb_quality']);
-      }
-      if (!file_exists($cachePath)) {
+      if ((!file_exists($cachePath) || filesize($cachePath) === 0) && in_array($ext, $config['image_extensions'])) {
         createThumbnail($fullPath, $cachePath, $config['thumb_size'], $config['thumb_quality']);
       }
     }
 
-    if (file_exists($cachePath)) {
+    while (ob_get_level() > 0) @ob_end_clean();
+
+    if (file_exists($cachePath) && filesize($cachePath) > 0) {
       header('Content-Type: image/jpeg');
       header('ETag: ' . $etag);
       header('Cache-Control: public, max-age=31536000, immutable');
       header('Content-Length: ' . filesize($cachePath));
       readfile($cachePath);
     } else {
-      $mime = mime_content_type($fullPath) ?: 'application/octet-stream';
+      $mime = @mime_content_type($fullPath) ?: 'application/octet-stream';
       if (strpos($mime, 'image/') === 0) {
         header('Content-Type: ' . $mime);
         header('ETag: ' . $etag);
@@ -10388,9 +10416,15 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
               if (item.thumb_image) card.classList.add('has-image');
 
-              let folderThumbHtml = item.thumb_image
-                ? `<img src="?action=thumb&f=${encodeURIComponent(item.thumb_image)}" alt="" loading="lazy" decoding="async">`
-                : `<div class="type-icon type-folder"><svg viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg></div>`;
+              let folderThumbHtml = `
+                <div class="type-icon type-folder" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:1;">
+                  <svg viewBox="0 0 16 16"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.37 3.328 5.742 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/></svg>
+                </div>
+              `;
+
+              if (item.thumb_image) {
+                folderThumbHtml += `<img src="?action=thumb&f=${encodeURIComponent(item.thumb_image)}" alt="" loading="lazy" decoding="async" style="position:relative; z-index:2; width:100%; height:100%; object-fit:cover;" onerror="this.remove(); this.closest('.file-card')?.classList.remove('has-image');">`;
+              }
 
               card.innerHTML = `
                 <div class="file-checkbox"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
@@ -10415,7 +10449,12 @@ $pageDesc = 'A lightweight, single-file self-hosted cloud drive and media galler
 
               if (item.type === 'image') {
                 card.classList.add('has-image');
-                thumbHtml = `<img src="?action=thumb&f=${encodeURIComponent(item.path)}" alt="" loading="lazy" decoding="async" onload="this.style.opacity='1'; if(this.naturalWidth && this.naturalHeight && window.app && window.app.layout==='justified'){ const c=this.closest('.file-card'); if(c){ const r=this.naturalWidth/this.naturalHeight; c.style.setProperty('--card-grow', r); c.style.setProperty('--card-ratio', r); } }">`;
+                thumbHtml = `
+                  <div class="type-icon" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#80cbc4; z-index:1;">
+                    <svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                  </div>
+                  <img src="?action=thumb&f=${encodeURIComponent(item.path)}" alt="" loading="lazy" decoding="async" style="position:relative; z-index:2; width:100%; height:100%; object-fit:cover;" onload="this.style.opacity='1'; if(this.naturalWidth && this.naturalHeight && window.app && window.app.layout==='justified'){ const c=this.closest('.file-card'); if(c){ const r=this.naturalWidth/this.naturalHeight; c.style.setProperty('--card-grow', r); c.style.setProperty('--card-ratio', r); } }" onerror="this.remove(); this.closest('.file-card')?.classList.remove('has-image');">
+                `;
                 if (this.layout === 'columns') {
                   thumbRatio = 'style="min-height:140px; height:auto;"';
                 }
